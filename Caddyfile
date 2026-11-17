@@ -1,0 +1,20 @@
+# Automatic HTTPS for the main domain AND every generated <slug>.yourdomain site.
+# Caddy asks the app (/api/tls-check) before issuing a cert, so only real sites get certificates.
+{
+	email {$ACME_EMAIL}
+	on_demand_tls {
+		ask http://app:8000/api/tls-check
+	}
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+	encode gzip
+	reverse_proxy app:8000
+}
+
+http:// {
+	redir https://{host}{uri} permanent
+}

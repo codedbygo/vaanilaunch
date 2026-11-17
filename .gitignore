@@ -1,0 +1,8 @@
+node_modules
+.env
+data
+__pycache__
+.venv
+frontend/dist
+.gstack/
+.pytest_cache

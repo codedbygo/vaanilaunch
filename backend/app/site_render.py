@@ -1,0 +1,179 @@
+"""Renders a generated storefront: bilingual, mobile-first, with catalogue, cart and UPI checkout."""
+import json
+import re
+from html import escape
+
+
+def _e(s) -> str:
+    return escape(str(s if s is not None else ""), quote=True)
+
+
+def _color(c) -> str:
+    return c if isinstance(c, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", c) else "#e8590c"
+
+
+def _price(v) -> str:
+    try:
+        v = float(v)
+        return f"₹{v:,.0f}" if v == int(v) else f"₹{v:,.2f}"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _product_card(p: dict, english: bool) -> str:
+    primary = p.get("name") if english else (p.get("name_local") or p.get("name"))
+    secondary = p.get("name_local") if english else p.get("name")
+    desc = p.get("description") if english else (p.get("description_local") or p.get("description"))
+    img = (f'<img src="/media/{_e(p["image_id"])}.jpg" alt="{_e(p.get("name"))}" loading="lazy">'
+           if p.get("image_id") else f'<div class="ph">{_e((primary or "?")[:1])}</div>')
+    unit = f' <small>/ {_e(p["unit"])}</small>' if p.get("unit") else ""
+    sold_out = p.get("available") is False
+    action = ('<span class="soldout">Sold out</span>' if sold_out else
+              f'<div class="qty" data-id="{_e(p["id"])}"><button class="minus" aria-label="less">−</button>'
+              f'<span class="n">0</span><button class="plus" aria-label="more">+</button></div>')
+    return (f'<article class="prod">{img}<div class="pb"><h3>{_e(primary)}</h3>'
+            f'{f"<div class=sec>{_e(secondary)}</div>" if secondary and secondary != primary else ""}'
+            f'<p>{_e(desc)}</p><div class="row"><strong>{_price(p.get("price"))}{unit}</strong>{action}</div></div></article>')
+
+
+def _lang_block(l: dict, i: int, products: list) -> str:
+    english = str(l.get("lang_code", "")).lower().startswith("en")
+    prods = "".join(_product_card(p, english) for p in products)
+    def service(s: dict) -> str:
+        price = f"<strong>{_e(s.get('price'))}</strong>" if s.get("price") else ""
+        return f"<div class=card><h3>{_e(s.get('name'))}</h3><p>{_e(s.get('description'))}</p>{price}</div>"
+
+    services = "".join(service(s) for s in l.get("services") or [])
+    faqs = "".join(f"<details><summary>{_e(f.get('q'))}</summary><p>{_e(f.get('a'))}</p></details>"
+                   for f in l.get("faqs") or [])
+    cta = f'<a class="btn" href="#menu-{i}">{_e(l.get("cta") or "Order now")}</a>' if products else ""
+    return f"""
+<div class="lang" data-lang="{_e(l.get('lang_code'))}" {'hidden' if i else ''}>
+  <header class="hero"><h1>{_e(l.get('hero_title'))}</h1><p>{_e(l.get('hero_subtitle'))}</p>{cta}</header>
+  {f'<section id="menu-{i}"><h2>{_e(l.get("products_heading") or "Our products")}</h2><div class="prods">{prods}</div></section>' if prods else ''}
+  {f'<section><h2>{_e(l.get("services_heading") or "Services")}</h2><div class="grid">{services}</div></section>' if services else ''}
+  <section><h2>{_e(l.get('about_heading') or 'About')}</h2><p>{_e(l.get('about'))}</p></section>
+  {f'<section><h2>{_e(l.get("faq_heading") or "FAQ")}</h2>{faqs}</section>' if faqs else ''}
+</div>"""
+
+
+CSS = """
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,'Noto Sans','Noto Sans Telugu','Noto Sans Devanagari',sans-serif;color:#222;background:#fffaf5;line-height:1.55;padding-bottom:80px}
+.notice{background:#222;color:#fff;text-align:center;padding:8px 12px;font-size:.92rem}
+.preview{background:#fff3bf;color:#5c4400;text-align:center;padding:8px;font-size:.9rem;font-weight:600}
+nav{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 16px;background:#fff;box-shadow:0 1px 4px #0001;position:sticky;top:0;z-index:5}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--p);font-size:1.1rem}
+.logo{width:36px;height:36px;border-radius:50%;background:var(--p);color:#fff;display:grid;place-items:center;font-size:1.1rem}
+nav .langs button{border:1px solid var(--p);background:#fff;color:var(--p);border-radius:20px;padding:4px 12px;margin-left:4px;cursor:pointer;font:inherit;font-size:.85rem}
+nav .langs button.on{background:var(--p);color:#fff}
+.hero{padding:52px 16px;text-align:center;background:linear-gradient(135deg,var(--p),color-mix(in srgb,var(--p) 55%,#000));color:#fff}
+.hero h1{font-size:clamp(1.8rem,5vw,3rem);margin:0 0 6px}.hero p{margin:0;opacity:.95}
+.btn{display:inline-block;margin-top:18px;background:#fff;color:var(--p);padding:12px 26px;border-radius:30px;text-decoration:none;font-weight:700}
+section{max-width:1000px;margin:auto;padding:28px 16px}h2{color:var(--p);margin-top:0}
+.prods{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+.prod{background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px #0000000f;display:flex;flex-direction:column}
+.prod img,.prod .ph{width:100%;aspect-ratio:4/3;object-fit:cover;background:color-mix(in srgb,var(--p) 15%,#fff)}
+.prod .ph{display:grid;place-items:center;font-size:3rem;color:var(--p)}
+.pb{padding:12px 14px;display:flex;flex-direction:column;flex:1}.pb h3{margin:0;font-size:1.05rem}.sec{color:#777;font-size:.85rem}
+.pb p{color:#555;font-size:.9rem;margin:6px 0 10px;flex:1}.row{display:flex;justify-content:space-between;align-items:center}
+.qty{display:flex;align-items:center;gap:8px}.qty button{width:32px;height:32px;border-radius:50%;border:0;background:var(--p);color:#fff;font-size:1.1rem;cursor:pointer}
+.qty .minus{background:#eee;color:#333}.soldout{color:#b00;font-size:.85rem;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}.card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 2px 8px #0001}
+details{background:#fff;border-radius:8px;padding:12px;margin:8px 0}
+form{display:grid;gap:10px;max-width:480px}input,textarea{padding:10px;border:1px solid #ccc;border-radius:8px;font:inherit;width:100%}
+.pbtn{background:var(--p);color:#fff;border:0;padding:12px;border-radius:10px;font:inherit;font-weight:700;cursor:pointer}
+.cartbar{position:fixed;left:12px;right:12px;bottom:12px;max-width:640px;margin:auto;background:var(--p);color:#fff;border-radius:14px;padding:12px 16px;display:none;justify-content:space-between;align-items:center;box-shadow:0 6px 20px #0003;z-index:10}
+.cartbar button{background:#fff;color:var(--p);border:0;border-radius:10px;padding:8px 16px;font:inherit;font-weight:700;cursor:pointer}
+.wa{position:fixed;right:16px;bottom:84px;width:54px;height:54px;border-radius:50%;background:#25d366;display:grid;place-items:center;box-shadow:0 4px 12px #0003;z-index:9;color:#fff;font-size:26px;text-decoration:none}
+dialog{border:0;border-radius:16px;padding:20px;width:min(440px,92vw);max-height:90vh}dialog::backdrop{background:#0007}
+.lines{margin:0 0 12px;padding:0;list-style:none}.lines li{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed #eee}
+.total{font-weight:700;font-size:1.1rem;text-align:right;margin-bottom:12px}
+.qr{width:220px;margin:8px auto;display:block}.qr svg{width:100%;height:auto}
+.paid-note{background:#fff8e1;border-radius:8px;padding:8px;font-size:.85rem;margin-top:10px}
+.x{float:right;background:none;border:0;font-size:1.4rem;cursor:pointer}
+footer{text-align:center;padding:24px;color:#777;font-size:.85rem}
+"""
+
+JS = """
+const D=window.__STORE__;const cart={};const fmt=n=>'₹'+(Math.round(n*100)/100).toLocaleString('en-IN');
+document.querySelectorAll('.langs button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.lang').forEach(d=>d.hidden=d.dataset.lang!==b.dataset.l);document.querySelectorAll('.langs button').forEach(x=>x.classList.toggle('on',x===b))});
+function render(){let n=0,t=0;for(const[id,q]of Object.entries(cart)){n+=q;t+=q*(D.prices[id]||0)}
+document.querySelectorAll('.qty').forEach(el=>el.querySelector('.n').textContent=cart[el.dataset.id]||0);
+const bar=document.getElementById('cartbar');bar.style.display=n?'flex':'none';document.getElementById('cartsum').textContent=`🛒 ${n} · ${fmt(t)}`}
+document.addEventListener('click',e=>{const q=e.target.closest('.qty');if(!q)return;const id=q.dataset.id;
+if(e.target.classList.contains('plus'))cart[id]=Math.min((cart[id]||0)+1,50);if(e.target.classList.contains('minus')){cart[id]=Math.max((cart[id]||0)-1,0);if(!cart[id])delete cart[id]}render()});
+const dlg=document.getElementById('checkout');
+document.getElementById('cartbtn').onclick=()=>{const ul=document.getElementById('lines');ul.innerHTML='';let t=0;
+for(const[id,q]of Object.entries(cart)){const li=document.createElement('li');const a=q*D.prices[id];t+=a;li.textContent=`${D.names[id]} × ${q}`;const s=document.createElement('span');s.textContent=fmt(a);li.appendChild(s);ul.appendChild(li)}
+document.getElementById('ctotal').textContent='Total: '+fmt(t);document.getElementById('step1').hidden=false;document.getElementById('step2').hidden=true;dlg.showModal()};
+document.getElementById('of').onsubmit=async e=>{e.preventDefault();const b=e.target.querySelector('button');b.disabled=true;b.textContent='Placing order…';
+const f=Object.fromEntries(new FormData(e.target));const body={slug:D.slug,name:f.name,phone:f.phone,note:f.note||'',items:Object.entries(cart).map(([id,qty])=>({id,qty}))};
+try{const r=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw new Error(j.detail||'Failed');
+document.getElementById('ref').textContent=j.ref;document.getElementById('ptotal').textContent=fmt(j.total);
+const pay=document.getElementById('pay');if(j.pay){pay.hidden=false;document.getElementById('qr').innerHTML=j.pay.qr_svg;document.getElementById('upibtn').href=j.pay.upi_link;document.getElementById('vpa').textContent=j.pay.vpa}else pay.hidden=true;
+const wa=document.getElementById('wabtn');if(D.wa){wa.hidden=false;wa.href=`https://wa.me/${D.wa}?text=`+encodeURIComponent(`Hi! I placed order ${j.ref} (${fmt(j.total)}) on your website.`)}
+document.getElementById('step1').hidden=true;document.getElementById('step2').hidden=false;for(const k in cart)delete cart[k];render();e.target.reset()}
+catch(err){alert(err.message)}finally{b.disabled=false;b.textContent=D.t.place}};
+document.querySelectorAll('.x').forEach(x=>x.onclick=()=>dlg.close());
+const cf=document.getElementById('cf');if(cf)cf.onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.target));f.slug=D.slug;const s=document.getElementById('cs');s.textContent='Sending…';
+let ok=false;try{const r=await fetch('/api/contact',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(f)});ok=r.ok}catch{}s.textContent=ok?'Thanks! We will get back to you soon.':'Could not send — please use WhatsApp.';if(ok)e.target.reset()};
+render();
+"""
+
+
+def render_site(site: dict, preview: bool = False) -> str:
+    color = _color((site.get("theme") or {}).get("primary_color"))
+    langs = site.get("content") or [{"lang_code": "en", "lang_label": "English",
+                                     "hero_title": site.get("business_name"), "hero_subtitle": site.get("tagline"), "about": ""}]
+    products = [p for p in site.get("products") or [] if p.get("id")]
+    c = site.get("contact") or {}
+    wa = re.sub(r"\D", "", c.get("whatsapp") or c.get("phone") or "")
+    if len(wa) == 10:
+        wa = "91" + wa
+    name = site.get("business_name") or "Store"
+
+    store_data = {
+        "slug": site.get("slug"),
+        "prices": {p["id"]: p.get("price", 0) for p in products},
+        "names": {p["id"]: p.get("name") for p in products},
+        "wa": wa,
+        "t": {"place": "Place order"},
+    }
+    lang_buttons = "".join(
+        f'<button data-l="{_e(l.get("lang_code"))}" class="{"" if i else "on"}">{_e(l.get("lang_label"))}</button>'
+        for i, l in enumerate(langs)) if len(langs) > 1 else ""
+    place = " · ".join(_e(x) for x in (c.get("address"), c.get("city")) if x)
+    hours = f"<p>🕒 {_e(c['hours'])}</p>" if c.get("hours") else ""
+    phone = f'<p>📞 <a href="tel:{_e(c["phone"])}">{_e(c["phone"])}</a></p>' if c.get("phone") else ""
+
+    return f"""<!doctype html><html lang="{_e(langs[0].get('lang_code') or 'en')}"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{_e(name)} – {_e(site.get('tagline'))}</title>
+<meta name="description" content="{_e(site.get('tagline'))}">
+<meta property="og:title" content="{_e(name)}"><meta property="og:description" content="{_e(site.get('tagline'))}">
+{f'<meta property="og:image" content="/media/{_e(products[0]["image_id"])}.jpg">' if products and products[0].get("image_id") else ''}
+<meta name="theme-color" content="{color}">
+<style>:root{{--p:{color}}}{CSS}</style></head><body>
+{'<div class="preview">👀 Preview — not live yet. Approve it in VaaniLaunch to publish.</div>' if preview else ''}
+{f'<div class="notice">📢 {_e(site["notice"])}</div>' if site.get("notice") else ''}
+<nav><div class="brand"><span class="logo">{_e(name[:1])}</span>{_e(name)}</div><div class="langs">{lang_buttons}</div></nav>
+{''.join(_lang_block(l, i, products) for i, l in enumerate(langs))}
+<section id="contact"><h2>Contact</h2>{f'<p>📍 {place}</p>' if place else ''}{phone}{hours}
+<form id="cf"><input name="name" placeholder="Your name" required><input name="email" type="email" placeholder="Email" required>
+<textarea name="message" rows="3" placeholder="Message" required></textarea><button class="pbtn">Send message</button><small id="cs"></small></form></section>
+<footer>{_e(site.get('tagline'))}<br>Launched with 🎙️ VaaniLaunch</footer>
+{f'<a class="wa" href="https://wa.me/{wa}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a>' if wa else ''}
+<div class="cartbar" id="cartbar"><span id="cartsum"></span><button id="cartbtn">Order →</button></div>
+<dialog id="checkout">
+ <div id="step1"><button class="x" aria-label="close">×</button><h2>Your order</h2><ul class="lines" id="lines"></ul><div class="total" id="ctotal"></div>
+  <form id="of"><input name="name" placeholder="Your name" required maxlength="100"><input name="phone" type="tel" placeholder="Phone number" required minlength="6" maxlength="20">
+  <textarea name="note" rows="2" placeholder="Address / delivery note (optional)" maxlength="500"></textarea><button class="pbtn">Place order</button></form></div>
+ <div id="step2" hidden><button class="x" aria-label="close">×</button><h2>✅ Order placed!</h2>
+  <p>Order <b id="ref"></b> · Total <b id="ptotal"></b></p>
+  <div id="pay"><p>Pay with any UPI app (GPay, PhonePe, Paytm):</p><div class="qr" id="qr"></div>
+   <p style="text-align:center"><a class="pbtn" id="upibtn" style="display:inline-block;text-decoration:none;padding:10px 18px">Pay with UPI app</a><br><small>UPI ID: <span id="vpa"></span></small></p></div>
+  <div class="paid-note">Payment status: <b>pending</b> — the owner will confirm once received.</div>
+  <p><a id="wabtn" hidden target="_blank" rel="noopener">💬 Message the owner on WhatsApp</a></p></div>
+</dialog>
+<script>window.__STORE__={json.dumps(store_data, ensure_ascii=False).replace('<', '\\u003c')};{JS}</script>
+</body></html>"""
