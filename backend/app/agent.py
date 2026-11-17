@@ -3,6 +3,7 @@ publishes it on GoDaddy DNS, verifies it, and keeps managing it by voice."""
 import asyncio
 import base64
 import json
+import logging
 import math
 import os
 import re
@@ -10,12 +11,14 @@ from datetime import date
 from typing import Awaitable, Callable
 
 import httpx
+import anthropic
 from anthropic import AsyncAnthropic
 
-from . import config, db, godaddy
+from . import config, db, free_llm, godaddy
 
 client = AsyncAnthropic()  # reads ANTHROPIC_API_KEY
 Emit = Callable[[str, object], Awaitable[None]]
+log = logging.getLogger("vaanilaunch")
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$")
 _usage = {"day": None, "calls": 0, "per_ip": {}}
 
@@ -49,7 +52,7 @@ LANGUAGE: Always reply in the user's language (see [Preferred language] hint and
 4. Domains: call suggest_domains, then check_domains on the best 4-8 candidates. Show the top 3 AVAILABLE with prices. Buying is optional; never block on it.
 5. Slug: choose a short lowercase slug and call check_slug.
 6. Build: call save_draft with COMPLETE, high-quality content (bilingual: user's language first + English, unless English-only). Include products (from photos) and/or services, 3 FAQs, contact, UPI if given.
-7. Approval: after save_draft, tell the owner to check the preview and tap "Approve & publish" (or tell you what to change). NEVER call publish_site until the owner has approved. If they request changes, call save_draft again with the changes.
+7. Approval: after save_draft, tell the owner to check the store preview shown on their screen (do not paste preview links; drafts are private) and tap "Approve & publish" (or tell you what to change). NEVER call publish_site until the owner has approved. If they request changes, call save_draft again with the changes.
 8. Publish: call publish_site, then verify_site.
 9. Celebrate briefly and give: the live URL, the domain options, and a launch kit — one WhatsApp status message, one Instagram caption with hashtags, and a 7-day plan to get first customers (one line per day).
 
@@ -365,6 +368,25 @@ async def _call_claude(system: list, messages: list):
     return await client.messages.create(**kw)
 
 
+# Claude failures the free backup model can cover: unreachable, rate-limited, down, or a bad key.
+_BACKUP_ON = (anthropic.APIConnectionError, anthropic.RateLimitError, anthropic.InternalServerError,
+              anthropic.AuthenticationError, anthropic.PermissionDeniedError)
+
+
+async def _call_model(system: list, messages: list):
+    """Claude by default; LLM_PROVIDER=free uses the free model (local testing);
+    LLM_FALLBACK=free switches a turn to the free model when Claude fails."""
+    if config.LLM_PROVIDER == "free":
+        return await free_llm.create(system, TOOLS, messages)
+    try:
+        return await _call_claude(system, messages)
+    except _BACKUP_ON as e:
+        if config.LLM_FALLBACK != "free" or not free_llm.configured():
+            raise
+        log.warning("Claude unavailable (%s); using the free backup model %s", type(e).__name__, config.FREE_LLM_MODEL)
+        return await free_llm.create(system, TOOLS, messages)
+
+
 async def run_agent(s: Session, user_text: str, emit: Emit, image_ids: list[str] | None = None, ip: str = "?") -> None:
     s.turns += 1
     s.saw_customer_text = False
@@ -379,7 +401,7 @@ async def run_agent(s: Session, user_text: str, emit: Emit, image_ids: list[str]
     try:
         for _ in range(16):
             _count_call(ip)
-            res = await _call_claude(system, s.messages)
+            res = await _call_model(system, s.messages)
 
             if res.stop_reason == "refusal":
                 del s.messages[start:]  # drop the whole turn so the next message starts clean

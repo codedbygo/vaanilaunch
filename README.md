@@ -12,7 +12,7 @@ VaaniLaunch is a voice-first, agentic launch assistant for first-time small busi
 6. Takes orders with a **UPI QR code** (totals always computed on the server) and emails each order through **Titan**
 7. Keeps managing the store by voice: "Add biryani ₹180", "Closed Sunday", "Show my orders", "Mark LT-4821 paid"
 
-**Stack:** FastAPI (Python 3.12) · React 18 + Vite · Claude tool use · GoDaddy Domains/DNS API · Titan SMTP · Docker + Caddy
+**Stack:** FastAPI (Python 3.12) · React 19 + TypeScript + Vite · Tailwind v4 + shadcn/ui · TanStack Router + Query · Zod · Claude tool use · GoDaddy Domains/DNS API · Titan SMTP · Docker + Caddy
 
 ## Architecture
 
@@ -35,7 +35,7 @@ Caddy (on-demand TLS for every subdomain) ── Docker Compose on GoDaddy VPS
 
 | Feature | Where |
 |---|---|
-| Voice in 9 Indian languages | `frontend/src/useSpeech.js` |
+| Voice in 9 Indian languages | `frontend/src/features/agent/useSpeech.ts` |
 | Claude tool-use agent (10 tools) | `backend/app/agent.py` |
 | Catalogue from photos (vision) | `/api/upload` + images in the agent turn |
 | Owner approval before publishing | `save_draft` → `/api/approve` → `publish_site` |
@@ -49,7 +49,7 @@ Caddy (on-demand TLS for every subdomain) ── Docker Compose on GoDaddy VPS
 
 ```
 backend/app/   main.py (routes) · agent.py (Claude loop + tools) · godaddy.py · notify.py (email + UPI) · site_render.py (storefront) · db.py · config.py
-frontend/src/  App.jsx · api.js (SSE client) · useSpeech.js (voice) · index.css
+frontend/src/  app/ (router, providers, stores) · features/agent (studio, SSE client, voice) · features/manage (owner dashboard) · features/stores · features/contact · components/ui (shadcn)
 Dockerfile     multi-stage: builds React, then runs FastAPI serving API + static files
 Caddyfile      automatic HTTPS for the domain + all generated subdomains
 ```
@@ -79,10 +79,29 @@ domain search is unavailable; without SMTP settings orders still work and emails
 
 Voice input needs Chrome or Edge, and a secure origin (`localhost` or HTTPS).
 
+## Models: Claude first, a free model as backup
+
+Claude runs the agent. A free model behind any OpenAI-compatible API (Gemini free tier, Groq,
+OpenRouter, or a local Ollama) can back it up, so the app does not depend on one provider:
+
+| `.env` | Effect |
+|---|---|
+| `LLM_PROVIDER=claude`, `LLM_FALLBACK=free` | Claude; if it is unreachable, rate-limited, down or out of credits, that turn runs on the free model |
+| `LLM_PROVIDER=free` | Everything on the free model: local testing at no Claude cost |
+| `LLM_PROVIDER=claude`, `LLM_FALLBACK=none` | Claude only |
+
+Set `FREE_LLM_BASE_URL`, `FREE_LLM_API_KEY` and `FREE_LLM_MODEL` (examples in `.env.example`).
+The conversation stays in one format, so a launch can switch models midway. Free models are
+weaker at tool use and Indian languages; use Claude for the demo.
+
+Fully offline UI testing without any model: `uvicorn --app-dir dev mock_claude:app --port 8765`
+(from `backend/`) and `ANTHROPIC_BASE_URL=http://127.0.0.1:8765`. It plays a scripted launch.
+
 ## Tests
 
 ```bash
 cd backend && pip install pytest && python -m pytest -q tests
+cd frontend && npm run check   # prettier, eslint, tsc, vitest with 80% coverage floors
 ```
 
 The suite drives the whole demo (photos, draft, blocked publish, approval, publish, verify,

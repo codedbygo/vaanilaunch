@@ -22,6 +22,26 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 # medium suits multi-step tool use; use low to save credits while developing
 ANTHROPIC_EFFORT = os.getenv("ANTHROPIC_EFFORT", "medium")
 
+# Model routing. claude (default) | free: which model runs the agent.
+# LLM_FALLBACK=free: when Claude is unreachable, rate-limited, down or the key fails, use the free model.
+_provider = os.getenv("LLM_PROVIDER", "claude").strip().lower()
+# Named providers are shortcuts for the free OpenAI-compatible route with a known address.
+_KNOWN_BASES = {"openrouter": "https://openrouter.ai/api/v1"}
+LLM_PROVIDER = "claude" if _provider == "claude" else "free"
+LLM_FALLBACK = os.getenv("LLM_FALLBACK", "none").strip().lower()
+# The free model: any OpenAI-compatible chat API (OpenRouter, Gemini free tier, Groq, local Ollama).
+FREE_LLM_BASE_URL = os.getenv("FREE_LLM_BASE_URL") or _KNOWN_BASES.get(_provider, "")
+FREE_LLM_API_KEY = os.getenv("FREE_LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
+FREE_LLM_MODEL = os.getenv("FREE_LLM_MODEL") or os.getenv("AGENT_MODEL", "")
+# Tried in order when the model above is rate-limited, down, or can't do tools or images.
+FREE_LLM_FALLBACK_MODELS = [
+    m.strip()
+    for m in (os.getenv("FREE_LLM_FALLBACK_MODELS") or os.getenv("AGENT_FALLBACK_MODELS", "")).split(",")
+    if m.strip()
+]
+# Seconds per reply. A local model on CPU can take minutes to write a whole store.
+FREE_LLM_TIMEOUT = float(os.getenv("FREE_LLM_TIMEOUT", "600"))
+
 GODADDY_API_KEY = os.getenv("GODADDY_API_KEY", "")
 GODADDY_API_SECRET = os.getenv("GODADDY_API_SECRET", "")
 GODADDY_API_BASE = os.getenv("GODADDY_API_BASE", "https://api.godaddy.com")

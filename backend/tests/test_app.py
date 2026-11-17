@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import sys
 
 import anthropic
 import httpx
@@ -460,3 +461,168 @@ def test_bad_api_key_gives_a_clear_message(fake):
     ev = run("hi")
     err = [e["data"] for e in ev if e["type"] == "error"]
     assert err and "API key is invalid" in err[0] and "x-api-key" not in err[0]
+
+
+def test_dev_mock_claude_runs_a_launch_end_to_end():
+    """The free local mock (backend/dev/mock_claude.py) drives a full launch through the real app."""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "dev"))
+    import mock_claude
+    from fastapi.testclient import TestClient as TC
+
+    mock = TC(mock_claude.app)
+
+    class ViaMock:  # route the agent's SDK calls to the mock app
+        class _M:
+            async def create(self, **kw):
+                kw.pop("betas", None); kw.pop("fallbacks", None)
+                data = mock.post("/v1/messages", json={k: v for k, v in kw.items() if k in ("messages", "model")}).json()
+                return msg(*data["content"], stop=data["stop_reason"])
+        messages = _M()
+        class beta:  # noqa: N801
+            pass
+    ViaMock.beta.messages = ViaMock._M()
+
+    import app.agent as agent_mod
+    old = agent_mod.client
+    agent_mod.client = ViaMock()
+    try:
+        img = upload()
+        ev = run("I sell idli batter", images=[img])
+        saved = steps(ev, "save_draft")[0]["result"]
+        slug = saved["slug"]
+        assert steps(ev, "check_slug")[0]["result"]["slug"] == slug
+        assert db.get_site(slug)["products"][0]["image_id"] == img
+        api.post("/api/approve", json={"sessionId": SID, "slug": slug})
+        ev = run("I approve the preview")
+        assert steps(ev, "publish_site")[0]["result"]["live"] is True
+        ev = run("Add biryani for 180")
+        assert any(p["name"] == "Sunday special biryani" for p in db.get_site(slug)["products"])
+    finally:
+        agent_mod.client = old
+
+
+# ---------------- Free backup model ----------------
+def _free_transport(replies, seen):
+    def handler(request: httpx.Request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=replies.pop(0))
+    return httpx.MockTransport(handler)
+
+
+def _oa(content=None, tool_calls=None):
+    msg = {"role": "assistant", "content": content}
+    if tool_calls:
+        msg["tool_calls"] = tool_calls
+    return {"id": "x", "model": "free-model", "choices": [{"message": msg, "finish_reason": "tool_calls" if tool_calls else "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 5}}
+
+
+@pytest.fixture
+def free_model(monkeypatch):
+    from app import config, free_llm
+    monkeypatch.setattr(config, "FREE_LLM_BASE_URL", "http://free.test/v1")
+    monkeypatch.setattr(config, "FREE_LLM_MODEL", "free-model")
+    monkeypatch.setattr(config, "FREE_LLM_API_KEY", "fk")
+    seen, replies = [], []
+    monkeypatch.setattr(free_llm, "_transport", _free_transport(replies, seen))
+    return config, seen, replies
+
+
+def test_free_model_as_primary_runs_tools_with_photos(free_model, monkeypatch):
+    config, seen, replies = free_model
+    monkeypatch.setattr(config, "LLM_PROVIDER", "free")
+    img = upload()
+    replies += [
+        _oa(tool_calls=[{"id": "c1", "type": "function", "function": {"name": "check_slug", "arguments": '{"slug": "my-shop"}'}}]),
+        _oa(content="Your address is free."),
+    ]
+    ev = run("I sell pickles", images=[img])
+    assert steps(ev, "check_slug")[0]["result"]["available"] is True
+    assert any(e["type"] == "message" and e["data"] == "Your address is free." for e in ev)
+    first, second = seen
+    assert first["model"] == "free-model" and first["tools"][0]["type"] == "function"
+    assert first["messages"][0]["role"] == "system"
+    user_parts = first["messages"][1]["content"]
+    assert user_parts[0]["type"] == "image_url" and user_parts[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    # the tool round trip is translated: assistant tool_calls, then a tool message with the result
+    assert second["messages"][2]["tool_calls"][0]["id"] == "c1"
+    assert second["messages"][3]["role"] == "tool" and second["messages"][3]["tool_call_id"] == "c1"
+    assert_valid_history(main.sessions[SID].messages)
+
+
+def test_free_model_takes_over_when_claude_fails(free_model, fake, monkeypatch):
+    config, seen, replies = free_model
+    monkeypatch.setattr(config, "LLM_FALLBACK", "free")
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    fake.script = [anthropic.AuthenticationError("invalid x-api-key", response=httpx.Response(401, request=req), body=None)]
+    replies.append(_oa(content="Hello from the backup model"))
+    ev = run("hi")
+    assert any(e["type"] == "message" and e["data"] == "Hello from the backup model" for e in ev)
+    assert len(seen) == 1
+
+
+def test_no_fallback_unless_configured(free_model, fake):
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    fake.script = [anthropic.AuthenticationError("invalid x-api-key", response=httpx.Response(401, request=req), body=None)]
+    ev = run("hi")
+    assert any(e["type"] == "error" and "API key is invalid" in e["data"] for e in ev)
+
+
+def test_free_model_bad_tool_json_does_not_crash(free_model, monkeypatch):
+    config, seen, replies = free_model
+    monkeypatch.setattr(config, "LLM_PROVIDER", "free")
+    replies += [
+        _oa(tool_calls=[{"type": "function", "function": {"name": "check_slug", "arguments": "{not json"}}]),
+        _oa(content="Sorry, retrying."),
+    ]
+    ev = run("go")
+    assert steps(ev, "check_slug")[0]["result"]["available"] is False  # empty slug is rejected, not a crash
+    assert_valid_history(main.sessions[SID].messages)
+
+
+def test_openrouter_env_names_are_understood():
+    import subprocess
+    env = {"PATH": os.environ["PATH"], "VAANI_NO_DOTENV": "1", "LLM_PROVIDER": "openrouter",
+           "OPENROUTER_API_KEY": "or-key", "AGENT_MODEL": "a/model:free",
+           "AGENT_FALLBACK_MODELS": "b/model:free, c/model:free ,"}
+    code = ("from app import config as c; print(c.LLM_PROVIDER, c.FREE_LLM_BASE_URL, c.FREE_LLM_API_KEY, "
+            "c.FREE_LLM_MODEL, ','.join(c.FREE_LLM_FALLBACK_MODELS))")
+    out = subprocess.run([sys.executable, "-c", code], env=env, cwd=os.path.dirname(os.path.dirname(__file__)),
+                         capture_output=True, text=True, check=True).stdout.split()
+    assert out == ["free", "https://openrouter.ai/api/v1", "or-key", "a/model:free", "b/model:free,c/model:free"]
+
+
+def test_free_model_falls_through_busy_models(free_model, monkeypatch):
+    config, seen, replies = free_model
+    from app import free_llm
+    monkeypatch.setattr(config, "LLM_PROVIDER", "free")
+    monkeypatch.setattr(config, "FREE_LLM_FALLBACK_MODELS", ["second", "third"])
+    answers = [
+        httpx.Response(429, json={"error": {"message": "rate limited"}}),
+        httpx.Response(200, json={"error": {"message": "provider down"}}),
+        httpx.Response(200, json=_oa(content="Third model here")),
+    ]
+
+    def handler(request):
+        seen.append(json.loads(request.content)["model"])
+        return answers.pop(0)
+    monkeypatch.setattr(free_llm, "_transport", httpx.MockTransport(handler))
+    ev = run("hi")
+    assert seen == ["free-model", "second", "third"]
+    assert any(e["type"] == "message" and e["data"] == "Third model here" for e in ev)
+
+
+def test_free_model_bad_key_stops_and_all_failing_is_reported(free_model, monkeypatch):
+    config, seen, replies = free_model
+    from app import free_llm
+    monkeypatch.setattr(config, "LLM_PROVIDER", "free")
+    monkeypatch.setattr(config, "FREE_LLM_FALLBACK_MODELS", ["second"])
+    calls = []
+    monkeypatch.setattr(free_llm, "_transport", httpx.MockTransport(lambda r: calls.append(1) or httpx.Response(401, json={})))
+    ev = run("hi")
+    assert len(calls) == 1 and any(e["type"] == "error" and "key was rejected" in e["data"] for e in ev)
+
+    monkeypatch.setattr(free_llm, "_transport", httpx.MockTransport(lambda r: httpx.Response(503, text="down")))
+    ev = run("again", sid="session-bbbb-2222")
+    assert any(e["type"] == "error" and "All free models failed" in e["data"] for e in ev)
