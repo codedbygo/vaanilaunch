@@ -36,7 +36,7 @@ def _product_card(p: dict, english: bool) -> str:
             f'<p>{_e(desc)}</p><div class="row"><strong>{_price(p.get("price"))}{unit}</strong>{action}</div></div></article>')
 
 
-def _lang_block(l: dict, i: int, products: list) -> str:
+def _lang_block(l: dict, i: int, products: list, facts: str = "") -> str:
     english = str(l.get("lang_code", "")).lower().startswith("en")
     prods = "".join(_product_card(p, english) for p in products)
     def service(s: dict) -> str:
@@ -50,6 +50,7 @@ def _lang_block(l: dict, i: int, products: list) -> str:
     return f"""
 <div class="lang" data-lang="{_e(l.get('lang_code'))}" {'hidden' if i else ''}>
   <header class="hero"><h1>{_e(l.get('hero_title'))}</h1><p>{_e(l.get('hero_subtitle'))}</p>{cta}</header>
+  {facts}
   {f'<section id="menu-{i}"><h2>{_e(l.get("products_heading") or "Our products")}</h2><div class="prods">{prods}</div></section>' if prods else ''}
   {f'<section><h2>{_e(l.get("services_heading") or "Services")}</h2><div class="grid">{services}</div></section>' if services else ''}
   <section><h2>{_e(l.get('about_heading') or 'About')}</h2><p>{_e(l.get('about'))}</p></section>
@@ -66,16 +67,16 @@ nav{display:flex;justify-content:space-between;align-items:center;gap:8px;paddin
 .logo{width:36px;height:36px;border-radius:50%;background:var(--p);color:#fff;display:grid;place-items:center;font-size:1.1rem}
 nav .langs button{border:1px solid var(--p);background:#fff;color:var(--p);border-radius:20px;padding:4px 12px;margin-left:4px;cursor:pointer;font:inherit;font-size:.85rem}
 nav .langs button.on{background:var(--p);color:#fff}
-.hero{padding:52px 16px;text-align:center;background:linear-gradient(135deg,var(--p),color-mix(in srgb,var(--p) 55%,#000));color:#fff}
-.hero h1{font-size:clamp(1.8rem,5vw,3rem);margin:0 0 6px}.hero p{margin:0;opacity:.95}
+.hero{padding:64px 18px 56px;text-align:center;background:linear-gradient(135deg,var(--p),color-mix(in srgb,var(--p) 55%,#000));color:#fff}
+.hero h1{font-size:clamp(2rem,7vw,3.2rem);margin:0 0 8px;letter-spacing:-.01em;text-shadow:0 2px 12px #0004}.hero p{margin:0;opacity:.95}
 .btn{display:inline-block;margin-top:18px;background:#fff;color:var(--p);padding:12px 26px;border-radius:30px;text-decoration:none;font-weight:700}
 section{max-width:1000px;margin:auto;padding:28px 16px}h2{color:var(--p);margin-top:0}
-.prods{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+.prods{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}@media(min-width:700px){.prods{grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}}
 .prod{background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px #0000000f;display:flex;flex-direction:column}
-.prod img,.prod .ph{width:100%;aspect-ratio:4/3;object-fit:cover;background:color-mix(in srgb,var(--p) 15%,#fff)}
+.prod img,.prod .ph{width:100%;aspect-ratio:1/1;object-fit:cover;background:color-mix(in srgb,var(--p) 15%,#fff)}
 .prod .ph{display:grid;place-items:center;font-size:3rem;color:var(--p)}
 .pb{padding:12px 14px;display:flex;flex-direction:column;flex:1}.pb h3{margin:0;font-size:1.05rem}.sec{color:#777;font-size:.85rem}
-.pb p{color:#555;font-size:.9rem;margin:6px 0 10px;flex:1}.row{display:flex;justify-content:space-between;align-items:center}
+.pb p{color:#555;font-size:.9rem;margin:6px 0 10px;flex:1}.row{display:flex;justify-content:space-between;align-items:center;gap:6px}.row strong small{display:block;font-weight:500;color:#777;font-size:.75rem}
 .qty{display:flex;align-items:center;gap:8px}.qty button{width:32px;height:32px;border-radius:50%;border:0;background:var(--p);color:#fff;font-size:1.1rem;cursor:pointer}
 .qty .minus{background:#eee;color:#333}.soldout{color:#b00;font-size:.85rem;font-weight:600}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}.card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 2px 8px #0001}
@@ -84,7 +85,9 @@ form{display:grid;gap:10px;max-width:480px}input,textarea{padding:10px;border:1p
 .pbtn{background:var(--p);color:#fff;border:0;padding:12px;border-radius:10px;font:inherit;font-weight:700;cursor:pointer}
 .cartbar{position:fixed;left:12px;right:12px;bottom:12px;max-width:640px;margin:auto;background:var(--p);color:#fff;border-radius:14px;padding:12px 16px;display:none;justify-content:space-between;align-items:center;box-shadow:0 6px 20px #0003;z-index:10}
 .cartbar button{background:#fff;color:var(--p);border:0;border-radius:10px;padding:8px 16px;font:inherit;font-weight:700;cursor:pointer}
-.wa{position:fixed;right:16px;bottom:84px;width:54px;height:54px;border-radius:50%;background:#25d366;display:grid;place-items:center;box-shadow:0 4px 12px #0003;z-index:9;color:#fff;font-size:26px;text-decoration:none}
+.wa{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#25d366;color:#fff;text-decoration:none;margin-left:6px;font-size:17px;vertical-align:middle}
+.facts{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:14px 12px 0;max-width:1000px;margin:auto}.facts span{background:#fff;border-radius:999px;padding:6px 12px;font-size:.82rem;box-shadow:0 1px 6px #0000000f}
+.bn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw}@media(max-width:420px){.bn{max-width:28vw}nav{padding:10px 12px}nav .langs button{padding:4px 9px;font-size:.78rem;margin-left:3px}.wa{width:30px;height:30px;font-size:15px;margin-left:4px}}.langs{display:flex;align-items:center;flex-wrap:nowrap}
 dialog{border:0;border-radius:16px;padding:20px;width:min(440px,92vw);max-height:90vh}dialog::backdrop{background:#0007}
 .lines{margin:0 0 12px;padding:0;list-style:none}.lines li{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed #eee}
 .total{font-weight:700;font-size:1.1rem;text-align:right;margin-bottom:12px}
@@ -144,6 +147,16 @@ def render_site(site: dict, preview: bool = False) -> str:
         for i, l in enumerate(langs)) if len(langs) > 1 else ""
     place = " · ".join(_e(x) for x in (c.get("address"), c.get("city")) if x)
     hours = f"<p>🕒 {_e(c['hours'])}</p>" if c.get("hours") else ""
+    facts = "".join(f"<span>{x}</span>" for x in (
+        f"📍 {_e(c['city'])}" if c.get("city") else "",
+        f"🕒 {_e(c['hours'])}" if c.get("hours") else "",
+        "💳 UPI accepted" if (site.get("upi") or {}).get("vpa") else "",
+        "💬 Order on WhatsApp" if wa else "",
+    ) if x)
+    facts = f'<div class="facts">{facts}</div>' if facts else ""
+    hero_img = next((p["image_id"] for p in products if re.fullmatch(r"[a-f0-9]{16}", str(p.get("image_id", "")))), None)
+    hero_bg = (f".hero{{background:linear-gradient(160deg,color-mix(in srgb,{color} 85%,#000c),#000b),"
+               f"url(/media/{hero_img}.jpg) center/cover}}") if hero_img else ""
     phone = f'<p>📞 <a href="tel:{_e(c["phone"])}">{_e(c["phone"])}</a></p>' if c.get("phone") else ""
 
     return f"""<!doctype html><html lang="{_e(langs[0].get('lang_code') or 'en')}"><head>
@@ -153,16 +166,15 @@ def render_site(site: dict, preview: bool = False) -> str:
 <meta property="og:title" content="{_e(name)}"><meta property="og:description" content="{_e(site.get('tagline'))}">
 {f'<meta property="og:image" content="/media/{_e(products[0]["image_id"])}.jpg">' if products and products[0].get("image_id") else ''}
 <meta name="theme-color" content="{color}">
-<style>:root{{--p:{color}}}{CSS}</style></head><body>
+<style>:root{{--p:{color}}}{CSS}{hero_bg}</style></head><body>
 {'<div class="preview">👀 Preview — not live yet. Approve it in VaaniLaunch to publish.</div>' if preview else ''}
 {f'<div class="notice">📢 {_e(site["notice"])}</div>' if site.get("notice") else ''}
-<nav><div class="brand"><span class="logo">{_e(name[:1])}</span>{_e(name)}</div><div class="langs">{lang_buttons}</div></nav>
-{''.join(_lang_block(l, i, products) for i, l in enumerate(langs))}
+<nav><div class="brand"><span class="logo">{_e(name[:1])}</span><span class="bn">{_e(name)}</span></div><div class="langs">{lang_buttons}{f'<a class="wa" href="https://wa.me/{wa}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a>' if wa else ''}</div></nav>
+{''.join(_lang_block(l, i, products, facts) for i, l in enumerate(langs))}
 <section id="contact"><h2>Contact</h2>{f'<p>📍 {place}</p>' if place else ''}{phone}{hours}
 <form id="cf"><input name="name" placeholder="Your name" required><input name="email" type="email" placeholder="Email" required>
 <textarea name="message" rows="3" placeholder="Message" required></textarea><button class="pbtn">Send message</button><small id="cs"></small></form></section>
 <footer>{_e(site.get('tagline'))}<br>Launched with 🎙️ VaaniLaunch</footer>
-{f'<a class="wa" href="https://wa.me/{wa}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a>' if wa else ''}
 <div class="cartbar" id="cartbar"><span id="cartsum"></span><button id="cartbtn">Order →</button></div>
 <dialog id="checkout">
  <div id="step1"><button class="x" aria-label="close">×</button><h2>Your order</h2><ul class="lines" id="lines"></ul><div class="total" id="ctotal"></div>

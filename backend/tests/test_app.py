@@ -420,3 +420,35 @@ def test_draft_contact_form_does_not_mail_owner(monkeypatch):
     db.save_draft("draft-x", {"business_name": "D", "owner_email": "victim@x.com"})
     api.post("/api/contact", json={"name": "A", "email": "e@x.com", "message": "spam", "slug": "draft-x"})
     assert sent[0]["To"] == "ops@b.in"
+
+
+# ---------------- Owner dashboard + QR ----------------
+def test_owner_dashboard_and_mark_paid():
+    site = _live_store()
+    ref = api.post("/api/orders", json={"slug": "shop-one", "name": "A", "phone": "900000",
+                                        "items": [{"id": "p1", "qty": 2}]}).json()["ref"]
+    assert api.get("/api/manage", params={"slug": "shop-one", "key": "wrong"}).status_code == 403
+    d = api.get("/api/manage", params={"slug": "shop-one", "key": site["edit_key"]}).json()
+    assert d["status"] == "live" and d["orders"][0]["ref"] == ref and d["orders"][0]["total"] == 160
+    bad = api.post(f"/api/manage/orders/{ref}", json={"slug": "shop-one", "key": "wrong", "status": "paid"})
+    assert bad.status_code == 403
+    assert api.post(f"/api/manage/orders/{ref}", json={"slug": "shop-one", "key": site["edit_key"], "status": "hacked"}).status_code == 422
+    ok = api.post(f"/api/manage/orders/{ref.lower()}", json={"slug": "shop-one", "key": site["edit_key"], "status": "paid"})
+    assert ok.status_code == 200 and db.get_order(ref)["status"] == "paid"
+
+
+def test_owner_cannot_touch_another_stores_order():
+    a = _live_store()
+    ref = api.post("/api/orders", json={"slug": "shop-one", "name": "A", "phone": "900000",
+                                        "items": [{"id": "p1", "qty": 1}]}).json()["ref"]
+    db.save_draft("shop-two", {"business_name": "Two"})
+    other = db.get_site("shop-two")["edit_key"]
+    r = api.post(f"/api/manage/orders/{ref}", json={"slug": "shop-two", "key": other, "status": "paid"})
+    assert r.status_code == 404 and db.get_order(ref)["status"] == "pending_payment"
+    assert a  # store one untouched
+
+
+def test_qr_endpoint():
+    r = api.get("/api/qr", params={"data": "https://lakshmi.vaani.in"})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg+xml") and "<svg" in r.text
+    assert api.get("/api/qr", params={"data": "javascript:alert(1)"}).status_code == 400

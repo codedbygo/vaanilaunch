@@ -49,3 +49,8 @@ export async function uploadPhoto(file) {
 export const approveDraft = (sessionId, slug) => postJSON('/api/approve', { sessionId, slug });
 export const sendContact = form => postJSON('/api/contact', form).then(() => true).catch(() => false);
 export const getSites = () => fetch('/api/sites').then(r => (r.ok ? r.json() : []));
+export const getManage = m =>
+  fetch(`/api/manage?slug=${encodeURIComponent(m.slug)}&key=${encodeURIComponent(m.key)}`).then(r => (r.ok ? r.json() : null));
+export const setOrderStatus = (m, ref, status) =>
+  postJSON(`/api/manage/orders/${encodeURIComponent(ref)}`, { slug: m.slug, key: m.key, status });
+export const qrUrl = data => `/api/qr?data=${encodeURIComponent(data)}`;

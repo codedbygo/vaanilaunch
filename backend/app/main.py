@@ -285,6 +285,48 @@ async def contact(body: ContactIn, request: Request):
     return {"ok": True}
 
 
+# ---------- Owner dashboard (secret manage link) ----------
+def _owner_site(slug: str, key: str) -> dict:
+    site = db.get_site(slug)
+    if not site or not key or not secrets.compare_digest(site.get("edit_key", ""), key):
+        raise HTTPException(403, "Invalid manage link")
+    return site
+
+
+@app.get("/api/manage")
+async def manage(slug: str, key: str):
+    """Store summary and recent orders for the owner's dashboard."""
+    site = _owner_site(slug, key)
+    return {"slug": slug, "name": site.get("business_name"), "status": site.get("status"),
+            "url": config.site_url(slug), "products": len(site.get("products") or []),
+            "orders": db.list_orders(slug, limit=30)}
+
+
+class OrderStatusIn(BaseModel):
+    slug: str
+    key: str
+    status: str = Field(pattern="^(paid|delivered|cancelled|pending_payment)$")
+
+
+@app.post("/api/manage/orders/{ref}")
+async def manage_order(ref: str, body: OrderStatusIn):
+    """The owner's own button press: the one place an order may become paid without the agent."""
+    _owner_site(body.slug, body.key)
+    order = db.get_order(ref.upper())
+    if not order or order["slug"] != body.slug:
+        raise HTTPException(404, "Order not found")
+    return db.set_order_status(order["ref"], body.status)
+
+
+@app.get("/api/qr")
+async def qr(data: str = ""):
+    """QR code for a store link, so judges and customers can open it on their phones."""
+    if not re.fullmatch(r"https?://[^\s]{1,290}", data):
+        raise HTTPException(400, "Only http(s) links")
+    return Response(notify.qr_svg(data), media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
 # ---------- React frontend (built files) ----------
 if os.path.isdir(config.STATIC_DIR):
     app.mount("/", StaticFiles(directory=config.STATIC_DIR, html=True), name="frontend")
