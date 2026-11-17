@@ -104,5 +104,5 @@ Claude, plus the approval, ownership, prompt-injection, pricing and escaping gua
 ## Notes
 
 - If the GoDaddy domain availability API returns **403**, check you are using a **Production** key and ask the organizers. The rest of the app still works.
-- If the SMTP login fails, keep `SMTP_HOST=smtpout.secureserver.net` and use the full email address as the username.
+- Titan SMTP: `SMTP_HOST=smtp.titan.email`, `SMTP_PORT=465`, username is the full mailbox address. (Old GoDaddy Workspace mail uses `smtpout.secureserver.net` instead.)
 - Secrets live only in `.env`, which git ignores.

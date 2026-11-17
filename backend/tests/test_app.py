@@ -452,3 +452,11 @@ def test_qr_endpoint():
     r = api.get("/api/qr", params={"data": "https://lakshmi.vaani.in"})
     assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg+xml") and "<svg" in r.text
     assert api.get("/api/qr", params={"data": "javascript:alert(1)"}).status_code == 400
+
+
+def test_bad_api_key_gives_a_clear_message(fake):
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    fake.script = [anthropic.AuthenticationError("invalid x-api-key", response=httpx.Response(401, request=req), body=None)]
+    ev = run("hi")
+    err = [e["data"] for e in ev if e["type"] == "error"]
+    assert err and "API key is invalid" in err[0] and "x-api-key" not in err[0]

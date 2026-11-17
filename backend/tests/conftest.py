@@ -4,6 +4,7 @@ import tempfile
 
 # Isolated data dir and no real credentials, set before the app is imported.
 os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="vl-test-")
+os.environ["VAANI_NO_DOTENV"] = "1"
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 for k in ("ROOT_DOMAIN", "SERVER_IP", "GODADDY_API_KEY", "GODADDY_API_SECRET", "SMTP_USER", "SMTP_PASS", "MAIL_TO"):
     os.environ.pop(k, None)

@@ -1,5 +1,23 @@
 import os
 
+
+def _load_dotenv(path: str):
+    """Read KEY=value lines from the project .env for local runs. Variables already set in the
+    environment win (that's how Docker's env_file and CI pass them)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+    except FileNotFoundError:
+        pass
+
+
+if not os.getenv("VAANI_NO_DOTENV"):  # tests set this to stay isolated from your real .env
+    _load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 # medium suits multi-step tool use; use low to save credits while developing
 ANTHROPIC_EFFORT = os.getenv("ANTHROPIC_EFFORT", "medium")
@@ -11,7 +29,7 @@ GODADDY_API_BASE = os.getenv("GODADDY_API_BASE", "https://api.godaddy.com")
 ROOT_DOMAIN = os.getenv("ROOT_DOMAIN", "").lower()
 SERVER_IP = os.getenv("SERVER_IP", "")
 
-SMTP_HOST = os.getenv("SMTP_HOST", "smtpout.secureserver.net")
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.titan.email")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")

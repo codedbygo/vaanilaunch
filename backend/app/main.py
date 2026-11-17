@@ -1,5 +1,7 @@
 import asyncio
 import base64
+
+import anthropic
 import json
 import logging
 import os
@@ -173,6 +175,12 @@ async def agent(body: AgentIn, request: Request):
     async def worker():
         try:
             await run_agent(s, text, emit, body.images, ip=ip)
+        except anthropic.AuthenticationError:
+            log.error("Claude API key rejected: check ANTHROPIC_API_KEY in .env, then restart")
+            await emit("error", "The server's Claude API key is invalid. The owner of this server needs to fix it.")
+        except (anthropic.RateLimitError, anthropic.InternalServerError, anthropic.APIConnectionError):
+            log.exception("Claude unavailable")
+            await emit("error", "Claude is busy right now. Please try again in a minute.")
         except Exception as e:
             log.exception("agent failed")
             await emit("error", str(e))
