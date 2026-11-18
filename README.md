@@ -134,6 +134,27 @@ Claude, plus the approval, ownership, prompt-injection, pricing and escaping gua
 6. `docker compose up -d --build`, then open `https://yourdomain.in`
 7. Logs: `docker compose logs -f app`
 
+## Production
+
+- **Production mode:** the Docker image sets `APP_ENV=production`. At startup the app checks its
+  settings and **refuses to start** if anything required is missing or unsafe (domain, server IP, SMTP,
+  model keys, proof-of-work strength, https base URL), listing every problem. Locally it only warns.
+- **Health:** `/healthz` (process alive) and `/readyz` (database accepts writes, disk has room).
+  Docker's health check uses `/readyz`; Caddy starts only once the app is healthy.
+- **Data:** SQLite at `/data/vaanilaunch.db` (WAL journal, one row per write), uploads in `/data/uploads`,
+  the signing secret in `/data/secret.key`. Old `sites.json` / `orders.json` are imported on first start.
+- **Backups:** `./scripts/backup.sh` writes `backups/vaanilaunch-<time>.tar.gz` while the app keeps
+  serving. Copy it off the server (and schedule it with cron, e.g. daily).
+- **Logs:** one JSON object per line, with a `request_id` that is also returned in the `X-Request-ID`
+  header, so a customer's problem can be found from the ID. Docker rotates logs (5 x 10 MB).
+- **Limits:** one app worker by design (sessions and rate limits live in memory); 1 GB memory cap;
+  read-only container filesystem; HSTS from Caddy.
+- **Dependencies:** Python packages install from `backend/requirements.lock` with hashes. After
+  changing `backend/requirements.txt`, regenerate it:
+  `uv pip compile backend/requirements.txt --generate-hashes --python-version 3.12 --universal -o backend/requirements.lock`
+- **CI:** `.github/workflows/ci.yml` runs both test suites (each fails below 100% coverage), the frontend
+  build, the Docker build, and checks that production refuses to start without its settings.
+
 ## Notes
 
 - If the GoDaddy domain availability API returns **403**, check you are using a **Production** key and ask the organizers. The rest of the app still works.

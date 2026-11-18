@@ -8,22 +8,33 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
-from . import config, db, notify, security, verify
+from . import config, db, notify, observability, security, verify
 from .agent import BudgetExceeded, Session, run_agent
 from .site_render import as_dict, as_list, render_site, store_csp
 
-logging.basicConfig(level=logging.INFO)
+observability.setup(json_logs=os.getenv("LOG_FORMAT", "json" if config.APP_ENV == "production" else "text") == "json")
 log = logging.getLogger("vaanilaunch")
+
+
+def check_config() -> list[str]:
+    """Production refuses to start with unsafe settings; development only warns."""
+    found = config.problems()
+    for p in found:
+        log.warning("config: %s", p)
+    if found and config.APP_ENV == "production":
+        raise RuntimeError("Refusing to start in production: " + "; ".join(found))
+    return found
 HOUSEKEEPING_EVERY = 6 * 3600
 
 
@@ -38,6 +49,7 @@ async def _housekeeping_loop():
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    check_config()
     task = asyncio.create_task(_housekeeping_loop())
     yield
     task.cancel()
@@ -118,6 +130,18 @@ _BODY_LIMIT = 256_000
 
 
 @app.middleware("http")
+async def request_ids(request: Request, call_next):
+    rid = observability.new_request_id(request.headers.get("x-request-id"))
+    token = observability.request_id.set(rid)
+    try:
+        response = await call_next(request)
+    finally:
+        observability.request_id.reset(token)
+    response.headers["X-Request-ID"] = rid
+    return response
+
+
+@app.middleware("http")
 async def guard(request: Request, call_next):
     if request.method == "POST" and request.url.path.startswith("/api/"):
         size = request.headers.get("content-length")
@@ -191,7 +215,25 @@ async def sites():
 
 @app.get("/healthz", response_class=PlainTextResponse)
 async def healthz():
+    """Liveness: the process answers."""
     return "ok"
+
+
+MIN_FREE_DISK = 200 * 1024 * 1024
+
+
+@app.get("/readyz")
+async def readyz():
+    """Readiness: the database accepts writes and the data disk has room. Docker's health check uses this."""
+    checks = {}
+    try:
+        checks["database"] = db.ping()
+    except Exception:
+        log.exception("readiness: database check failed")
+        checks["database"] = False
+    checks["disk"] = shutil.disk_usage(config.DATA_DIR).free > MIN_FREE_DISK
+    ok = all(checks.values())
+    return JSONResponse({"ok": ok, **checks}, status_code=200 if ok else 503)
 
 
 # ---------- Photo upload (frontend resizes to ~1024px JPEG first) ----------

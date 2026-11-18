@@ -12,6 +12,11 @@ https:// {
 		on_demand
 	}
 	encode gzip
+	# Browsers remember to use HTTPS for a year; the server name is not advertised.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
 	# Second layer behind the app's own limits: nothing bigger than a photo upload reaches it.
 	request_body {
 		max_size 5MB

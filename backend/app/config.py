@@ -83,3 +83,30 @@ def public_base() -> str:
 
 def site_url(slug: str) -> str:
     return f"https://{slug}.{ROOT_DOMAIN}" if ROOT_DOMAIN else f"{public_base()}/s/{slug}"
+
+
+# ---------- Startup checks ----------
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+
+
+def problems() -> list[str]:
+    """Settings that would break or weaken a production deploy. Empty means good to go."""
+    found = []
+    if not ROOT_DOMAIN or not SERVER_IP:
+        found.append("ROOT_DOMAIN and SERVER_IP must be set (stores live at <slug>.ROOT_DOMAIN)")
+    if not (SMTP_USER and SMTP_PASS and MAIL_TO):
+        found.append("SMTP_USER, SMTP_PASS and MAIL_TO must be set (order and contact emails)")
+    claude_ok = bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
+    free_ok = bool(FREE_LLM_BASE_URL and FREE_LLM_MODEL)
+    if LLM_PROVIDER == "claude" and not claude_ok:
+        found.append("ANTHROPIC_API_KEY must be set when LLM_PROVIDER=claude")
+    if LLM_PROVIDER == "free" and not free_ok:
+        found.append("a free model (AGENT_MODEL / FREE_LLM_*) must be set when LLM_PROVIDER is not claude")
+    if LLM_FALLBACK == "free" and not free_ok:
+        found.append("LLM_FALLBACK=free needs a free model (AGENT_MODEL / FREE_LLM_*)")
+    if POW_BITS < 12:
+        found.append("POW_BITS must be at least 12 in production (scripted floods)")
+    base = os.getenv("PUBLIC_BASE_URL", "")
+    if base and not base.startswith("https://"):
+        found.append("PUBLIC_BASE_URL must use https:// in production")
+    return found

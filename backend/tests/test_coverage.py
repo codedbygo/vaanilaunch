@@ -671,3 +671,116 @@ def test_store_pages_answer_head_requests():
     _live_store()
     r = api.head("/s/shop-one")
     assert r.status_code == 200 and "sha256-" in r.headers["content-security-policy"]
+
+
+# ---------------- SQLite store ----------------
+def test_writes_survive_a_restart(tmp_path):
+    site = _live_store()
+    ref = db.create_order({"slug": "shop-one", "items": [], "total": 5, "customer": {"name": "A", "phone": "1", "note": ""}})["ref"]
+    db.set_order_status(ref, "paid")
+    sites, orders = db._read_all(db._connect(db.DB_PATH))  # a fresh connection, as after a restart
+    assert sites["shop-one"]["edit_key"] == site["edit_key"]
+    assert orders[ref]["status"] == "paid" and orders[ref]["total"] == 5
+
+
+def test_legacy_json_is_imported_once(tmp_path):
+    (tmp_path / "sites.json").write_text(json.dumps({"old-shop": {"slug": "old-shop", "status": "live"}}))
+    (tmp_path / "orders.json").write_text(json.dumps(
+        {"OS-1": {"ref": "OS-1", "slug": "old-shop", "createdAt": "2026-01-01T00:00:00+00:00", "total": 9}}))
+    conn = db._connect(str(tmp_path / "store.db"))
+    assert db._import_legacy(conn, str(tmp_path)) == 2
+    sites, orders = db._read_all(conn)
+    assert sites["old-shop"]["status"] == "live" and orders["OS-1"]["total"] == 9
+    assert (tmp_path / "sites.json.migrated").exists() and not (tmp_path / "sites.json").exists()
+    assert db._import_legacy(conn, str(tmp_path)) == 0  # already imported
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert db._import_legacy(db._connect(str(empty / "s.db")), str(empty)) == 0  # nothing to import
+    only_sites = tmp_path / "only-sites"
+    only_sites.mkdir()
+    (only_sites / "sites.json").write_text(json.dumps({"a": {"slug": "a"}}))
+    assert db._import_legacy(db._connect(str(only_sites / "s.db")), str(only_sites)) == 1
+
+
+def test_ping_and_backup(tmp_path):
+    _live_store()
+    assert db.ping() is True
+    dest = db.backup(str(tmp_path / "backup.db"))
+    sites, _ = db._read_all(db._connect(dest))
+    assert "shop-one" in sites
+
+
+# ---------------- Production readiness ----------------
+def _prod_ready(monkeypatch):
+    for k, v in {"ROOT_DOMAIN": "vaani.in", "SERVER_IP": "1.2.3.4", "SMTP_USER": "o@vaani.in", "SMTP_PASS": "x",
+                 "MAIL_TO": "o@vaani.in", "LLM_PROVIDER": "claude", "LLM_FALLBACK": "none", "POW_BITS": 16,
+                 "FREE_LLM_BASE_URL": "", "FREE_LLM_MODEL": ""}.items():
+        monkeypatch.setattr(config, k, v)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-x")
+    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+
+
+def test_config_problems(monkeypatch):
+    _prod_ready(monkeypatch)
+    assert config.problems() == []
+    monkeypatch.setattr(config, "ROOT_DOMAIN", "")
+    monkeypatch.setattr(config, "SMTP_PASS", "")
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setattr(config, "LLM_FALLBACK", "free")
+    monkeypatch.setattr(config, "POW_BITS", 0)
+    monkeypatch.setenv("PUBLIC_BASE_URL", "http://vaani.in")
+    found = " | ".join(config.problems())
+    for words in ("ROOT_DOMAIN", "SMTP_USER", "ANTHROPIC_API_KEY", "LLM_FALLBACK=free", "POW_BITS", "https://"):
+        assert words in found
+    monkeypatch.setattr(config, "LLM_PROVIDER", "free")
+    assert any("free model" in p and "LLM_PROVIDER" in p for p in config.problems())
+
+
+def test_production_refuses_to_start_with_problems(monkeypatch):
+    _prod_ready(monkeypatch)
+    monkeypatch.setattr(config, "APP_ENV", "production")
+    assert main.check_config() == []
+    monkeypatch.setattr(config, "SERVER_IP", "")
+    with pytest.raises(RuntimeError, match="Refusing to start"):
+        main.check_config()
+    monkeypatch.setattr(config, "APP_ENV", "development")
+    assert main.check_config()  # development only warns
+
+
+def test_readiness(monkeypatch):
+    assert api.get("/readyz").json() == {"ok": True, "database": True, "disk": True}
+
+    def broken():
+        raise OSError("disk full")
+    monkeypatch.setattr(main.db, "ping", broken)
+    r = api.get("/readyz")
+    assert r.status_code == 503 and r.json()["database"] is False
+    monkeypatch.setattr(main.db, "ping", lambda: True)
+    monkeypatch.setattr(main, "MIN_FREE_DISK", 10**18)
+    assert api.get("/readyz").json()["disk"] is False
+
+
+def test_request_ids():
+    r = api.get("/healthz", headers={"x-request-id": "abc12345-req"})
+    assert r.headers["x-request-id"] == "abc12345-req"
+    generated = api.get("/healthz", headers={"x-request-id": "bad id with spaces"}).headers["x-request-id"]
+    assert len(generated) == 32 and " " not in generated
+
+
+def test_json_logs_carry_request_id_and_errors(capsys):
+    from app import observability
+    observability.setup(json_logs=True)
+    token = observability.request_id.set("req-12345678")
+    try:
+        logging.getLogger("vaanilaunch").info("hello")
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            logging.getLogger("vaanilaunch").exception("failed")
+    finally:
+        observability.request_id.reset(token)
+    lines = [json.loads(line) for line in capsys.readouterr().err.strip().splitlines()]
+    assert lines[0]["request_id"] == "req-12345678" and lines[0]["message"] == "hello"
+    assert "ValueError: boom" in lines[1]["error"]
+    observability.setup(json_logs=False)

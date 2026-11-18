@@ -3,10 +3,24 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    environment:
+      APP_ENV: production
     volumes:
       - app_data:/data
     expose:
       - "8000"
+    # A runaway request can't take the VPS down with it.
+    mem_limit: 1g
+    cpus: 2
+    # Logs rotate instead of filling the disk.
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
 
   caddy:
     image: caddy:2-alpine
@@ -21,7 +35,14 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - app
+      app:
+        condition: service_healthy
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   app_data:
