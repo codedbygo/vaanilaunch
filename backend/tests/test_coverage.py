@@ -566,6 +566,15 @@ def test_redact_filter_leaves_non_tuple_args():
 
 def test_mount_frontend_only_when_built(tmp_path):
     assert main.mount_frontend(str(tmp_path / "missing")) is False
+    # Built: mounted on a throwaway app so the shared test app keeps its routes.
+    (tmp_path / "index.html").write_text("<h1>VaaniLaunch</h1>")
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    spare = FastAPI()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(main, "app", spare)
+        assert main.mount_frontend(str(tmp_path)) is True
+    assert "VaaniLaunch" in TestClient(spare).get("/").text
 
 
 def test_housekeeping_runs_at_startup_and_survives_errors(monkeypatch):
