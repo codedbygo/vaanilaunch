@@ -5,6 +5,10 @@ import { useLayoutEffect, useRef, useState } from "react";
 // recognition after a few seconds of silence, so we quietly restart until the user taps stop.
 const MAX_MS = 3 * 60 * 1000; // safety stop for a mic left on
 
+// Chrome on Android repeats and garbles words in continuous mode; there we take one phrase per
+// session and restart, which the onend handler already does for silences.
+const continuousWorks = () => !/Android/i.test(navigator.userAgent);
+
 interface RecognitionResult {
   isFinal: boolean;
   0: { transcript: string };
@@ -46,6 +50,7 @@ export function useSpeech({ lang, onText, onEnd, onError }: Options) {
   const rec = useRef<Recognition | null>(null);
   const want = useRef(false); // the user wants the mic on
   const said = useRef(""); // finished phrases so far, across restarts
+  const discard = useRef(false); // set by cancel(): end quietly, don't hand back old words
   const startedAt = useRef(0);
   // Recognition ends long after it starts; always call the latest callbacks.
   const cb = useRef({ onText, onEnd, onError });
@@ -56,9 +61,11 @@ export function useSpeech({ lang, onText, onEnd, onError }: Options) {
   const begin = (Ctor: RecognitionCtor) => {
     const r = new Ctor();
     r.lang = lang;
-    r.continuous = true;
+    r.continuous = continuousWorks();
     r.interimResults = true;
     r.onresult = (e) => {
+      // Words from a cancelled or finished session never reach the box.
+      if (discard.current || rec.current !== r) return;
       let interim = "";
       for (const res of Array.from(e.results).slice(e.resultIndex)) {
         if (res.isFinal) said.current = `${said.current} ${res[0].transcript}`.trim();
@@ -83,7 +90,7 @@ export function useSpeech({ lang, onText, onEnd, onError }: Options) {
       want.current = false;
       rec.current = null;
       setListening(false);
-      cb.current.onEnd(said.current);
+      if (!discard.current) cb.current.onEnd(said.current);
     };
     rec.current = r;
     r.start();
@@ -97,6 +104,7 @@ export function useSpeech({ lang, onText, onEnd, onError }: Options) {
       return;
     }
     want.current = true;
+    discard.current = false;
     said.current = "";
     startedAt.current = Date.now();
     setListening(true);
@@ -108,5 +116,14 @@ export function useSpeech({ lang, onText, onEnd, onError }: Options) {
     }
   };
 
-  return { supported: Boolean(SR), listening, toggle };
+  /** The message was sent: stop listening and forget what was heard, so it can't come back. */
+  const cancel = () => {
+    said.current = "";
+    if (!want.current) return;
+    want.current = false;
+    discard.current = true;
+    rec.current?.stop();
+  };
+
+  return { supported: Boolean(SR), listening, toggle, cancel };
 }

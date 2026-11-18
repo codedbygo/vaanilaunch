@@ -98,6 +98,32 @@ describe("Composer", () => {
     expect(session.note).toHaveBeenCalledWith(expect.stringMatching(/permission/i));
   });
 
+  it("tapping Send while the mic is on sends once and leaves the box empty", async () => {
+    const recs = installMic();
+    const session = fakeSession();
+    render(<Composer session={session} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /speak in/i }));
+    act(() => {
+      recs[0]?.onresult?.({
+        resultIndex: 0,
+        results: [Object.assign([{ transcript: "ఇడ్లీ 80" }], { isFinal: true })],
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(session.send).toHaveBeenCalledWith("ఇడ్లీ 80");
+    const box = screen.getByRole("textbox", { name: "Message" });
+    expect(box).toHaveValue("");
+    expect(screen.getByRole("button", { name: /speak in/i })).toBeInTheDocument(); // mic is off
+    act(() => {
+      recs[0]?.onresult?.({
+        resultIndex: 0,
+        results: [Object.assign([{ transcript: "ఇడ్లీ 80 more" }], { isFinal: true })],
+      });
+    });
+    expect(box).toHaveValue("");
+  });
+
   it("handles photos, the file picker and empty Enter", async () => {
     const session = fakeSession({
       photos: [{ key: "k1", url: "/media/a.jpg", id: "aaaaaaaaaaaaaaaa" }],

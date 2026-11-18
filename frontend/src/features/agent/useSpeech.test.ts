@@ -111,3 +111,56 @@ describe("useSpeech", () => {
     expect(result.current.listening).toBe(false);
   });
 });
+
+describe("useSpeech: sending clears the mic", () => {
+  it("cancel stops listening and forgets what was heard: no late words, no old message back", () => {
+    const mic = installFakeRecognition();
+    const onText = vi.fn();
+    const onEnd = vi.fn();
+    const { result } = renderHook(() =>
+      useSpeech({ lang: "te-IN", onText, onEnd, onError: vi.fn() }),
+    );
+    act(() => {
+      result.current.cancel(); // not listening: nothing to stop
+      result.current.toggle();
+      mic.say("idli 80", true);
+    });
+    expect(onText).toHaveBeenLastCalledWith("idli 80");
+    onText.mockClear();
+    act(() => {
+      result.current.cancel(); // the owner tapped Send while the mic was on
+    });
+    expect(result.current.listening).toBe(false);
+    expect(onEnd).not.toHaveBeenCalled();
+    act(() => {
+      mic.say("late words", true); // a result that arrives after the stop is ignored
+    });
+    expect(onText).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.toggle(); // the next recording starts empty
+    });
+    act(() => {
+      mic.made[1]?.onresult?.({
+        resultIndex: 0,
+        results: [Object.assign([{ transcript: "dosa" }], { isFinal: true })],
+      });
+    });
+    expect(onText).toHaveBeenLastCalledWith("dosa");
+  });
+
+  it("uses one phrase per session on Android, where continuous mode repeats words", () => {
+    const mic = installFakeRecognition();
+    const ua = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("Mozilla/5.0 (Linux; Android 14)");
+    const { result } = renderHook(() =>
+      useSpeech({ lang: "hi-IN", onText: vi.fn(), onEnd: vi.fn(), onError: vi.fn() }),
+    );
+    act(() => {
+      result.current.toggle();
+    });
+    expect(mic.made[0]?.continuous).toBe(false);
+    ua.mockRestore();
+  });
+});

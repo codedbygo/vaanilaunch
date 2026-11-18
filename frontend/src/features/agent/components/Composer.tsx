@@ -22,6 +22,7 @@ export function Composer({ session }: { session: LaunchSession }) {
   const native = langOf(lang).native;
 
   const submit = (text: string) => {
+    speech.cancel(); // a mic still on must not refill the box with this message
     setInput("");
     void send(text);
   };
