@@ -28,7 +28,7 @@ describe("Dashboard", () => {
     expect(screen.getByText("Idli batter × 1, Mango pickle × 1")).toBeInTheDocument();
 
     server.use(
-      http.get("*/api/manage", () =>
+      http.post("*/api/manage", () =>
         HttpResponse.json({ ...dashboard, orders: [{ ...dashboard.orders[0], status: "paid" }] }),
       ),
     );
@@ -41,7 +41,7 @@ describe("Dashboard", () => {
 
   it("shows an empty state", async () => {
     server.use(
-      http.get("*/api/manage", () =>
+      http.post("*/api/manage", () =>
         HttpResponse.json({ ...dashboard, status: "draft", orders: [] }),
       ),
     );
@@ -52,13 +52,13 @@ describe("Dashboard", () => {
 
   it("shows an error with a retry", async () => {
     server.use(
-      http.get("*/api/manage", () =>
+      http.post("*/api/manage", () =>
         HttpResponse.json({ detail: "Invalid manage link" }, { status: 403 }),
       ),
     );
     renderWithProviders(<Dashboard creds={creds} />);
     expect(await screen.findByRole("alert")).toHaveTextContent(/could not load your store/i);
-    server.use(http.get("*/api/manage", () => HttpResponse.json(dashboard)));
+    server.use(http.post("*/api/manage", () => HttpResponse.json(dashboard)));
     await userEvent.click(screen.getByRole("button", { name: /try again/i }));
     expect(await screen.findByText("LT-1001")).toBeInTheDocument();
   });

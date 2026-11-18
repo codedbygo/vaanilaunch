@@ -10,8 +10,8 @@ const step = (tool: string, result: Record<string, unknown>, label = tool): Step
   status: "done",
   result,
 });
-const ev = (s: SessionState, st: Step, now = 0, key?: string) =>
-  sessionReducer(s, { type: "event", event: { type: "step", data: st }, now, key });
+const ev = (s: SessionState, st: Step, now = 0, preview?: string) =>
+  sessionReducer(s, { type: "event", event: { type: "step", data: st }, now, preview });
 
 describe("sessionReducer", () => {
   it("runs a launch: send starts the timer, draft, approval, publish, verify", () => {
@@ -39,11 +39,11 @@ describe("sessionReducer", () => {
         "Building store “Lakshmi Tiffins” (3 products)",
       ),
       2000,
-      "k&y",
+      "9.t&k",
     );
     expect(s.draft).toEqual({
       slug: "lt",
-      previewUrl: "/s/lt?preview=1&key=k%26y",
+      previewUrl: "/s/lt?preview=1&t=9.t%26k",
       approved: false,
     });
     expect(s.storeName).toBe("Lakshmi Tiffins");

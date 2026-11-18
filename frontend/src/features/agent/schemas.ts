@@ -19,6 +19,8 @@ export const agentEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("error"), data: z.string() }),
   z.object({ type: z.literal("step"), data: stepSchema }),
   z.object({ type: z.literal("done"), data: z.null() }),
+  // Which model really answered (Claude, or the free backup), for honest timeline labels.
+  z.object({ type: z.literal("model"), data: z.object({ model: z.string(), label: z.string() }) }),
 ]);
 export type AgentEvent = z.infer<typeof agentEventSchema>;
 
@@ -33,6 +35,8 @@ export const draftResultSchema = z.object({
   preview_url: z.string(),
   products: z.number(),
   _manage: manageCredsSchema.optional(),
+  // Short-lived token that opens this private draft; the permanent key never goes in a URL.
+  _preview: z.string().optional(),
 });
 
 export const publishResultSchema = z.object({
@@ -65,3 +69,6 @@ export const uploadResultSchema = z.object({ id: z.string(), url: z.string() });
 export type UploadResult = z.infer<typeof uploadResultSchema>;
 
 export const approveResultSchema = z.object({ approved: z.literal(true) });
+
+export const powChallengeSchema = z.object({ challenge: z.string(), bits: z.number() });
+export type PowChallenge = z.infer<typeof powChallengeSchema>;

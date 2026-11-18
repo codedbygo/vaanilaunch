@@ -40,12 +40,14 @@ export interface SessionState {
   celebrate: boolean;
   /** Bumped whenever the store changes, so the phone preview reloads. */
   previewVersion: number;
+  /** "Claude" or "Free model": which model really answered, for the timeline badges. */
+  modelLabel: string;
   nextId: number;
 }
 
 export type SessionAction =
   | { type: "send"; text: string; images: string[]; now: number; startTimer: boolean }
-  | { type: "event"; event: AgentEvent; now: number; key?: string | undefined }
+  | { type: "event"; event: AgentEvent; now: number; preview?: string | undefined }
   | { type: "note"; text: string }
   | { type: "turn-end" }
   | { type: "approved" }
@@ -63,6 +65,7 @@ export function initialSession(welcome: string): SessionState {
     busy: false,
     celebrate: false,
     previewVersion: 0,
+    modelLabel: "Claude",
     nextId: 1,
   };
 }
@@ -71,7 +74,7 @@ function addMessage(s: SessionState, m: Omit<ChatMessage, "id">): SessionState {
   return { ...s, messages: [...s.messages, { ...m, id: s.nextId }], nextId: s.nextId + 1 };
 }
 
-function applyStep(s: SessionState, step: Step, now: number, key?: string): SessionState {
+function applyStep(s: SessionState, step: Step, now: number, preview?: string): SessionState {
   const i = s.steps.findIndex((x) => x.id === step.id);
   const steps = i === -1 ? [...s.steps, step] : s.steps.map((x, j) => (j === i ? step : x));
   let next: SessionState = { ...s, steps };
@@ -79,10 +82,10 @@ function applyStep(s: SessionState, step: Step, now: number, key?: string): Sess
 
   const draft = draftResultSchema.safeParse(step.result);
   if (draft.success) {
-    const k = key ? `&key=${encodeURIComponent(key)}` : "";
+    const t = preview ? `&t=${encodeURIComponent(preview)}` : "";
     next = {
       ...next,
-      draft: { slug: draft.data.slug, previewUrl: draft.data.preview_url + k, approved: false },
+      draft: { slug: draft.data.slug, previewUrl: draft.data.preview_url + t, approved: false },
       storeName: /“(.+)”/.exec(step.label)?.[1] ?? next.storeName,
       previewVersion: next.previewVersion + 1,
     };
@@ -106,6 +109,21 @@ function applyStep(s: SessionState, step: Step, now: number, key?: string): Sess
   return next;
 }
 
+function applyEvent(s: SessionState, e: AgentEvent, now: number, preview?: string): SessionState {
+  switch (e.type) {
+    case "message":
+      return addMessage(s, { role: "bot", text: e.data });
+    case "error":
+      return addMessage(s, { role: "bot", text: `⚠️ ${e.data}` });
+    case "step":
+      return applyStep(s, e.data, now, preview);
+    case "model":
+      return { ...s, modelLabel: e.data.label };
+    case "done":
+      return s;
+  }
+}
+
 export function sessionReducer(s: SessionState, a: SessionAction): SessionState {
   switch (a.type) {
     case "send": {
@@ -117,17 +135,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       };
     }
     case "event":
-      switch (a.event.type) {
-        case "message":
-          return addMessage(s, { role: "bot", text: a.event.data });
-        case "error":
-          return addMessage(s, { role: "bot", text: `⚠️ ${a.event.data}` });
-        case "step":
-          return applyStep(s, a.event.data, a.now, a.key);
-        case "done":
-          return s;
-      }
-      return s;
+      return applyEvent(s, a.event, a.now, a.preview);
     case "note":
       return addMessage(s, { role: "bot", text: a.text });
     case "turn-end":

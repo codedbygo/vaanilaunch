@@ -74,6 +74,13 @@ export interface LaunchSnapshot {
   hasDraft: boolean;
   approved: boolean;
   live: boolean;
+  /** Which model really answered; Claude steps say so honestly when the free backup ran. */
+  modelLabel?: string;
+}
+
+function byLabel(m: MilestoneDef, model: string): string {
+  if (m.actor !== "Claude" || model === "Claude") return m.by;
+  return m.by.includes("vision") ? `${model} (vision)` : model;
 }
 
 /** Say only what verify_site actually checked (a local run has no DNS and no HTTPS). */
@@ -116,13 +123,12 @@ function toolMilestone(m: MilestoneDef, steps: Step[]): Omit<MilestoneState, key
       const record = publishResultSchema.safeParse(ok.result).data?.dns?.record;
       return { status: "done", detail: record ? `A record ${record}` : "Served via wildcard DNS" };
     }
-    case "verify": {
+    default: {
+      // "verify", the last tool milestone
       const v = verifyResultSchema.safeParse(ok.result).data;
       if (!v) return { status: "done" };
       return { status: v.ok ? "done" : "warn", detail: verifyLabel(v) };
     }
-    default:
-      return { status: "done" };
   }
 }
 
@@ -142,7 +148,8 @@ function milestone(m: MilestoneDef, s: LaunchSnapshot): Omit<MilestoneState, key
 
 /** Every milestone's state; a step the agent never needed shows as skipped once later ones ran. */
 export function deriveMilestones(s: LaunchSnapshot): MilestoneState[] {
-  const states = MILESTONES.map((m) => ({ ...m, ...milestone(m, s) }));
+  const model = s.modelLabel ?? "Claude";
+  const states = MILESTONES.map((m) => ({ ...m, by: byLabel(m, model), ...milestone(m, s) }));
   const lastActive = states.map((x) => x.status !== "idle").lastIndexOf(true);
   return states.map((x, i) =>
     x.status === "idle" && i < lastActive ? { ...x, status: "skip" } : x,

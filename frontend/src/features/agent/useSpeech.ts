@@ -60,9 +60,7 @@ export function useSpeech({ lang, onText, onEnd, onError }: Options) {
     r.interimResults = true;
     r.onresult = (e) => {
       let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const res = e.results[i];
-        if (!res) continue;
+      for (const res of Array.from(e.results).slice(e.resultIndex)) {
         if (res.isFinal) said.current = `${said.current} ${res[0].transcript}`.trim();
         else interim += res[0].transcript;
       }

@@ -7,3 +7,5 @@ frontend/dist
 .gstack/
 .pytest_cache
 frontend/coverage
+backend/.coverage
+htmlcov

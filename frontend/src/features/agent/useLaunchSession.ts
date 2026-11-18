@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useReducer, useState } from "react";
+import { useReducer, useRef, useState } from "react";
 
 import { useManageStore } from "@/app/stores/manage-store";
 import { manageKeys } from "@/features/manage/hooks";
@@ -7,6 +7,7 @@ import { storeKeys } from "@/features/stores/hooks";
 
 import { approveDraft, streamAgent, uploadPhoto } from "./api";
 import { langOf, type LangCode } from "./languages";
+import { getPowSolution } from "./pow";
 import { manageCredsSchema, type AgentEvent } from "./schemas";
 import { initialSession, sessionReducer } from "./session";
 
@@ -42,20 +43,22 @@ export function useLaunchSession() {
   const [lang, setLang] = useState<LangCode>("te-IN");
   const [photos, setPhotos] = useState<PendingPhoto[]>([]);
 
+  // The server knows this session once a first message got through; only then is no puzzle needed.
+  const known = useRef(false);
+
   const onEvent = (event: AgentEvent) => {
-    let key: string | undefined;
+    let preview: string | undefined;
     if (event.type === "step" && event.data.status === "done") {
       const m = manageCredsSchema.safeParse(event.data.result?._manage);
-      if (m.success) {
-        setCreds(m.data);
-        key = m.data.key;
-      }
+      if (m.success) setCreds(m.data);
+      const t = event.data.result?._preview;
+      if (typeof t === "string") preview = t;
     }
-    dispatch({ type: "event", event, now: Date.now(), key });
+    dispatch({ type: "event", event, now: Date.now(), preview });
   };
 
   const send = async (raw: string) => {
-    const ready = photos.filter((p) => p.id !== undefined);
+    const ready = photos.filter((p): p is PendingPhoto & { id: string } => p.id !== undefined);
     const text = raw.trim() || (ready.length ? "📷 Here are my product photos." : "");
     if (!text || state.busy) return;
     if (ready.length !== photos.length) {
@@ -72,16 +75,20 @@ export function useLaunchSession() {
     });
     const current = useManageStore.getState().creds;
     try {
+      // A brand-new visitor proves it's a browser, not a script (a manage link is proof enough).
+      const pow = known.current || current ? undefined : await getPowSolution();
       await streamAgent(
         {
           sessionId,
-          images: ready.flatMap((p) => (p.id ? [p.id] : [])),
+          images: ready.map((p) => p.id),
           text: `${text}\n\n[Preferred language: ${langOf(lang).english}]`,
           manageSlug: current?.slug,
           manageKey: current?.key,
+          pow,
         },
         onEvent,
       );
+      known.current = true;
     } catch (e) {
       dispatch({ type: "note", text: `⚠️ ${errorText(e)}` });
     } finally {
@@ -109,10 +116,12 @@ export function useLaunchSession() {
     setPhotos((p) => p.filter((x) => x.key !== key));
   };
 
-  const approve = async () => {
-    if (!state.draft) return;
+  /** Approve this tab's draft, or (after a reload) the owner's draft store given by `slug`. */
+  const approve = async (slug?: string) => {
+    const target = state.draft?.slug ?? slug;
+    if (!target) return;
     try {
-      await approveDraft(sessionId, state.draft.slug);
+      await approveDraft(sessionId, target, useManageStore.getState().creds?.key);
       dispatch({ type: "approved" });
       await send("✅ I approve the preview. Please publish my store.");
     } catch (e) {

@@ -1,4 +1,6 @@
 """Renders a generated storefront: bilingual, mobile-first, with catalogue, cart and UPI checkout."""
+import base64
+import hashlib
 import json
 import re
 from html import escape
@@ -43,9 +45,9 @@ def _lang_block(l: dict, i: int, products: list, facts: str = "") -> str:
         price = f"<strong>{_e(s.get('price'))}</strong>" if s.get("price") else ""
         return f"<div class=card><h3>{_e(s.get('name'))}</h3><p>{_e(s.get('description'))}</p>{price}</div>"
 
-    services = "".join(service(s) for s in l.get("services") or [])
+    services = "".join(service(s) for s in as_list(l.get("services")) if isinstance(s, dict))
     faqs = "".join(f"<details><summary>{_e(f.get('q'))}</summary><p>{_e(f.get('a'))}</p></details>"
-                   for f in l.get("faqs") or [])
+                   for f in as_list(l.get("faqs")) if isinstance(f, dict))
     cta = f'<a class="btn" href="#menu-{i}">{_e(l.get("cta") or "Order now")}</a>' if products else ""
     return f"""
 <div class="lang" data-lang="{_e(l.get('lang_code'))}" {'hidden' if i else ''}>
@@ -94,11 +96,13 @@ dialog{border:0;border-radius:16px;padding:20px;width:min(440px,92vw);max-height
 .qr{width:220px;margin:8px auto;display:block}.qr svg{width:100%;height:auto}
 .paid-note{background:#fff8e1;border-radius:8px;padding:8px;font-size:.85rem;margin-top:10px}
 .x{float:right;background:none;border:0;font-size:1.4rem;cursor:pointer}
+.privacy{color:#777;font-size:.78rem}
+.oerr{color:#b00020;background:#fdecee;border-radius:8px;padding:8px 10px;margin:0;font-size:.9rem}
 footer{text-align:center;padding:24px;color:#777;font-size:.85rem}
 """
 
 JS = """
-const D=window.__STORE__;const cart={};const fmt=n=>'₹'+(Math.round(n*100)/100).toLocaleString('en-IN');
+const D=JSON.parse(document.getElementById('store-data').textContent);const cart={};const fmt=n=>'₹'+(Math.round(n*100)/100).toLocaleString('en-IN');
 document.querySelectorAll('.langs button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.lang').forEach(d=>d.hidden=d.dataset.lang!==b.dataset.l);document.querySelectorAll('.langs button').forEach(x=>x.classList.toggle('on',x===b))});
 function render(){let n=0,t=0;for(const[id,q]of Object.entries(cart)){n+=q;t+=q*(D.prices[id]||0)}
 document.querySelectorAll('.qty').forEach(el=>el.querySelector('.n').textContent=cart[el.dataset.id]||0);
@@ -109,14 +113,14 @@ const dlg=document.getElementById('checkout');
 document.getElementById('cartbtn').onclick=()=>{const ul=document.getElementById('lines');ul.innerHTML='';let t=0;
 for(const[id,q]of Object.entries(cart)){const li=document.createElement('li');const a=q*D.prices[id];t+=a;li.textContent=`${D.names[id]} × ${q}`;const s=document.createElement('span');s.textContent=fmt(a);li.appendChild(s);ul.appendChild(li)}
 document.getElementById('ctotal').textContent='Total: '+fmt(t);document.getElementById('step1').hidden=false;document.getElementById('step2').hidden=true;dlg.showModal()};
-document.getElementById('of').onsubmit=async e=>{e.preventDefault();const b=e.target.querySelector('button');b.disabled=true;b.textContent='Placing order…';
+document.getElementById('of').onsubmit=async e=>{e.preventDefault();document.getElementById('oerr').hidden=true;const b=e.target.querySelector('button');b.disabled=true;b.textContent='Placing order…';
 const f=Object.fromEntries(new FormData(e.target));const body={slug:D.slug,name:f.name,phone:f.phone,note:f.note||'',items:Object.entries(cart).map(([id,qty])=>({id,qty}))};
 try{const r=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw new Error(j.detail||'Failed');
 document.getElementById('ref').textContent=j.ref;document.getElementById('ptotal').textContent=fmt(j.total);
 const pay=document.getElementById('pay');if(j.pay){pay.hidden=false;document.getElementById('qr').innerHTML=j.pay.qr_svg;document.getElementById('upibtn').href=j.pay.upi_link;document.getElementById('vpa').textContent=j.pay.vpa}else pay.hidden=true;
 const wa=document.getElementById('wabtn');if(D.wa){wa.hidden=false;wa.href=`https://wa.me/${D.wa}?text=`+encodeURIComponent(`Hi! I placed order ${j.ref} (${fmt(j.total)}) on your website.`)}
 document.getElementById('step1').hidden=true;document.getElementById('step2').hidden=false;for(const k in cart)delete cart[k];render();e.target.reset()}
-catch(err){alert(err.message)}finally{b.disabled=false;b.textContent=D.t.place}};
+catch(err){const m=document.getElementById("oerr");m.textContent=err.message||"Could not place the order. Please try again.";m.hidden=false}finally{b.disabled=false;b.textContent=D.t.place}};
 document.querySelectorAll('.x').forEach(x=>x.onclick=()=>dlg.close());
 const cf=document.getElementById('cf');if(cf)cf.onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.target));f.slug=D.slug;const s=document.getElementById('cs');s.textContent='Sending…';
 let ok=false;try{const r=await fetch('/api/contact',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(f)});ok=r.ok}catch{}s.textContent=ok?'Thanks! We will get back to you soon.':'Could not send — please use WhatsApp.';if(ok)e.target.reset()};
@@ -124,12 +128,33 @@ render();
 """
 
 
+# The inline script never changes (store data rides in a JSON block), so the browser can allow
+# exactly this script by its hash and refuse any other: injected markup cannot run code.
+JS_HASH = base64.b64encode(hashlib.sha256(JS.encode()).digest()).decode()
+
+
+def store_csp(ancestors: str) -> str:
+    return (f"default-src 'self'; script-src 'sha256-{JS_HASH}'; style-src 'unsafe-inline'; "
+            f"img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; "
+            f"object-src 'none'; frame-ancestors {ancestors}")
+
+
+def as_list(v) -> list:
+    return v if isinstance(v, list) else []
+
+
+def as_dict(v) -> dict:
+    return v if isinstance(v, dict) else {}
+
+
 def render_site(site: dict, preview: bool = False) -> str:
-    color = _color((site.get("theme") or {}).get("primary_color"))
-    langs = site.get("content") or [{"lang_code": "en", "lang_label": "English",
-                                     "hero_title": site.get("business_name"), "hero_subtitle": site.get("tagline"), "about": ""}]
-    products = [p for p in site.get("products") or [] if p.get("id")]
-    c = site.get("contact") or {}
+    color = _color(as_dict(site.get("theme")).get("primary_color"))
+    # Defence in depth: skip any malformed entry instead of failing the whole page.
+    langs = [l for l in as_list(site.get("content")) if isinstance(l, dict)] or [
+        {"lang_code": "en", "lang_label": "English", "hero_title": site.get("business_name"),
+         "hero_subtitle": site.get("tagline"), "about": ""}]
+    products = [p for p in as_list(site.get("products")) if isinstance(p, dict) and p.get("id")]
+    c = as_dict(site.get("contact"))
     wa = re.sub(r"\D", "", c.get("whatsapp") or c.get("phone") or "")
     if len(wa) == 10:
         wa = "91" + wa
@@ -150,7 +175,7 @@ def render_site(site: dict, preview: bool = False) -> str:
     facts = "".join(f"<span>{x}</span>" for x in (
         f"📍 {_e(c['city'])}" if c.get("city") else "",
         f"🕒 {_e(c['hours'])}" if c.get("hours") else "",
-        "💳 UPI accepted" if (site.get("upi") or {}).get("vpa") else "",
+        "💳 UPI accepted" if as_dict(site.get("upi")).get("vpa") else "",
         "💬 Order on WhatsApp" if wa else "",
     ) if x)
     facts = f'<div class="facts">{facts}</div>' if facts else ""
@@ -179,7 +204,7 @@ def render_site(site: dict, preview: bool = False) -> str:
 <dialog id="checkout">
  <div id="step1"><button class="x" aria-label="close">×</button><h2>Your order</h2><ul class="lines" id="lines"></ul><div class="total" id="ctotal"></div>
   <form id="of"><input name="name" placeholder="Your name" required maxlength="100"><input name="phone" type="tel" placeholder="Phone number" required minlength="6" maxlength="20">
-  <textarea name="note" rows="2" placeholder="Address / delivery note (optional)" maxlength="500"></textarea><button class="pbtn">Place order</button></form></div>
+  <textarea name="note" rows="2" placeholder="Address / delivery note (optional)" maxlength="500"></textarea><small class="privacy">Your name, phone and note go only to this store to deliver your order.</small><button class="pbtn">Place order</button><p id="oerr" class="oerr" role="alert" hidden></p></form></div>
  <div id="step2" hidden><button class="x" aria-label="close">×</button><h2>✅ Order placed!</h2>
   <p>Order <b id="ref"></b> · Total <b id="ptotal"></b></p>
   <div id="pay"><p>Pay with any UPI app (GPay, PhonePe, Paytm):</p><div class="qr" id="qr"></div>
@@ -187,5 +212,6 @@ def render_site(site: dict, preview: bool = False) -> str:
   <div class="paid-note">Payment status: <b>pending</b> — the owner will confirm once received.</div>
   <p><a id="wabtn" hidden target="_blank" rel="noopener">💬 Message the owner on WhatsApp</a></p></div>
 </dialog>
-<script>window.__STORE__={json.dumps(store_data, ensure_ascii=False).replace('<', '\\u003c')};{JS}</script>
+<script type="application/json" id="store-data">{json.dumps(store_data, ensure_ascii=False).replace('<', '\\u003c')}</script>
+<script>{JS}</script>
 </body></html>"""

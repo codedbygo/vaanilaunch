@@ -21,7 +21,8 @@ export default defineConfig({
   },
   preview: { port: 4173, strictPort: true },
   build: {
-    sourcemap: true,
+    // No source maps in production: they would publish readable source to every visitor.
+    sourcemap: false,
     // A chunk over this size is a review question, not a warning to silence.
     chunkSizeWarningLimit: 500,
     // Vendor code changes rarely: split it so an app release doesn't re-download React.

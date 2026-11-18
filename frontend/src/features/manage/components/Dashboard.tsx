@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 
 import { useDashboard, useSetOrderStatus } from "../hooks";
 import type { Order, OrderStatus } from "../schemas";
+import { OwnerSettings } from "./OwnerSettings";
 
 const STATUS: Record<OrderStatus, { label: string; className: string }> = {
   pending_payment: { label: "Payment pending", className: "bg-warning-soft text-warning" },
@@ -126,6 +127,7 @@ export function Dashboard({ creds }: { creds: ManageCreds }) {
           </div>
         ))}
       </dl>
+      <OwnerSettings creds={creds} dash={d} />
       <h3 className="text-sm font-bold">Orders</h3>
       {d.orders.length === 0 ? (
         <p className="text-sm text-muted-foreground">

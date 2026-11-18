@@ -100,7 +100,7 @@ export function Timeline({ milestones }: { milestones: MilestoneState[] }) {
                     <b>{d.domain}</b>
                     {d.price != null && (
                       <span className="font-bold text-godaddy">
-                        {d.currency === "INR" ? "₹" : `${d.currency ?? ""} `}
+                        {d.currency === "INR" ? "₹" : d.currency ? `${d.currency} ` : ""}
                         {d.price}
                       </span>
                     )}

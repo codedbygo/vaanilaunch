@@ -27,6 +27,7 @@ const draftStep = {
     preview_url: "/s/lakshmi-tiffins?preview=1",
     products: 3,
     _manage: { slug: "lakshmi-tiffins", key: "secret-key" },
+    _preview: "9999999999.tok",
   },
 };
 const publishStep = {
@@ -99,7 +100,7 @@ describe("App", () => {
     });
     expect(within(studio).getByTitle("Store preview")).toHaveAttribute(
       "src",
-      "/s/lakshmi-tiffins?preview=1&key=secret-key",
+      "/s/lakshmi-tiffins?preview=1&t=9999999999.tok",
     );
     expect(useManageStore.getState().creds).toEqual({ slug: "lakshmi-tiffins", key: "secret-key" });
 

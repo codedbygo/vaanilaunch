@@ -1,6 +1,7 @@
 import { ApiError, apiFetch } from "@/lib/api";
 import { env } from "@/lib/env";
 
+import type { PowSolution } from "./pow";
 import { approveResultSchema, uploadResultSchema, type AgentEvent } from "./schemas";
 import { createSseParser } from "./sse";
 
@@ -10,6 +11,7 @@ export interface AgentRequest {
   images: string[];
   manageSlug?: string | undefined;
   manageKey?: string | undefined;
+  pow?: PowSolution | undefined;
 }
 
 async function errorDetail(res: Response): Promise<string> {
@@ -32,7 +34,6 @@ async function errorDetail(res: Response): Promise<string> {
 export async function streamAgent(
   body: AgentRequest,
   onEvent: (event: AgentEvent) => void,
-  signal?: AbortSignal,
 ): Promise<void> {
   let res: Response;
   try {
@@ -40,7 +41,6 @@ export async function streamAgent(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      ...(signal ? { signal } : {}),
     });
   } catch (cause) {
     throw new ApiError("network", 0, "Could not reach the server. Check your connection.", cause);
@@ -75,10 +75,11 @@ export async function uploadPhoto(file: File) {
   });
 }
 
-export function approveDraft(sessionId: string, slug: string) {
+/** The owner's key goes along so approval still works after a server restart (sessions are in memory). */
+export function approveDraft(sessionId: string, slug: string, key?: string) {
   return apiFetch("/api/approve", approveResultSchema, {
     method: "POST",
-    body: JSON.stringify({ sessionId, slug }),
+    body: JSON.stringify({ sessionId, slug, key }),
   });
 }
 

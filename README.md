@@ -79,6 +79,20 @@ domain search is unavailable; without SMTP settings orders still work and emails
 
 Voice input needs Chrome or Edge, and a secure origin (`localhost` or HTTPS).
 
+## Security and privacy
+
+- **Owner approval:** the server refuses to publish until the owner taps Approve; any change resets it.
+- **Private links:** drafts open only with a 2-hour preview token (`/s/<slug>?t=`); the permanent key never
+  goes in a URL or log, and the owner can reset it from the dashboard.
+- **Customer text can't steer the agent:** once order notes are read, no store or order changes in that turn.
+- **Owner email confirmation:** orders go to an owner's address only after they click the confirmation link.
+- **Abuse limits:** proof of work on a new visitor's first message, per-IP (per IPv6 /64) rate limits, a daily
+  AI budget with a reserve for existing owners, body-size limits, JSON-only POSTs.
+- **Headers:** strict Content Security Policy (store pages allow only their own script by hash), nosniff,
+  no-referrer, frame-ancestors; the phone preview is sandboxed.
+- **Privacy:** customer phones are masked for the AI; customer details are removed after `ORDER_PII_DAYS`;
+  unused photos are deleted after `ORPHAN_UPLOAD_HOURS`.
+
 ## Models: Claude first, a free model as backup
 
 Claude runs the agent. A free model behind any OpenAI-compatible API (Gemini free tier, Groq,
@@ -100,8 +114,8 @@ Fully offline UI testing without any model: `uvicorn --app-dir dev mock_claude:a
 ## Tests
 
 ```bash
-cd backend && pip install pytest && python -m pytest -q tests
-cd frontend && npm run check   # prettier, eslint, tsc, vitest with 80% coverage floors
+cd backend && pip install -r requirements-dev.txt && python -m pytest -q tests --cov=app --cov-branch --cov-fail-under=100
+cd frontend && npm run check   # prettier, eslint, tsc, vitest; fails below 100% coverage
 ```
 
 The suite drives the whole demo (photos, draft, blocked publish, approval, publish, verify,

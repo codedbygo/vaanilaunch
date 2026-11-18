@@ -20,6 +20,9 @@ export const dashboard = {
   status: "live",
   url: "http://localhost:8000/s/lakshmi-tiffins",
   products: 3,
+  preview_token: "9999999999.previewtoken",
+  owner_email: "lakshmi@shop.in",
+  owner_email_verified: false,
   orders: [
     {
       ref: "LT-1001",
@@ -36,7 +39,7 @@ export const dashboard = {
 
 export const handlers = [
   http.get("*/api/sites", () => HttpResponse.json([])),
-  http.get("*/api/manage", () => HttpResponse.json(dashboard)),
+  http.post("*/api/manage", () => HttpResponse.json(dashboard)),
   http.post("*/api/manage/orders/:ref", async ({ params, request }) => {
     const body = (await request.json()) as { status: string };
     return HttpResponse.json({ ...dashboard.orders[0], ref: params.ref, status: body.status });
@@ -47,6 +50,11 @@ export const handlers = [
     HttpResponse.json({ id: "0123456789abcdef", url: "/media/0123456789abcdef.jpg" }),
   ),
   http.post("*/api/contact", () => HttpResponse.json({ ok: true })),
+  // Difficulty 0: any nonce solves it, so tests stay fast. pow.test.ts checks real difficulty.
+  http.get("*/api/pow", () => HttpResponse.json({ challenge: "test-challenge", bits: 0 })),
+  http.post("*/api/manage/rotate", () =>
+    HttpResponse.json({ slug: "lakshmi-tiffins", key: "rotated-key" }),
+  ),
 ];
 
 export const server = setupServer(...handlers);

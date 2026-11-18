@@ -14,26 +14,30 @@ import httpx
 import anthropic
 from anthropic import AsyncAnthropic
 
-from . import config, db, free_llm, godaddy
+from . import config, db, free_llm, godaddy, security, verify
 
 client = AsyncAnthropic()  # reads ANTHROPIC_API_KEY
 Emit = Callable[[str, object], Awaitable[None]]
 log = logging.getLogger("vaanilaunch")
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$")
 _usage = {"day": None, "calls": 0, "per_ip": {}}
+_http_transport: httpx.AsyncBaseTransport | None = None  # tests inject a mock transport for verify_site
 
 
 class BudgetExceeded(Exception):
     pass
 
 
-def _count_call(ip: str = "?"):
-    """Global daily cap plus a per-IP share, so one visitor can't use up everyone's budget."""
+def _count_call(ip: str = "?", owner: bool = False):
+    """Global daily cap plus a per-IP share, so one visitor can't use up everyone's budget.
+    New visitors may use only part of the global cap; the rest stays for owners of existing stores."""
     today = date.today().isoformat()
     if _usage["day"] != today:
         _usage.update(day=today, calls=0, per_ip={})
     if _usage["calls"] >= config.MAX_CLAUDE_CALLS_PER_DAY:
         raise BudgetExceeded("Daily AI budget reached — please try again tomorrow.")
+    if not owner and _usage["calls"] >= config.MAX_CLAUDE_CALLS_PER_DAY * config.NEW_VISITOR_BUDGET_SHARE:
+        raise BudgetExceeded("We're very busy today — new stores can be started again tomorrow.")
     if _usage["per_ip"].get(ip, 0) >= config.MAX_CLAUDE_CALLS_PER_IP_PER_DAY:
         raise BudgetExceeded("You have used today's AI budget — please try again tomorrow.")
     _usage["calls"] += 1
@@ -173,16 +177,53 @@ class Session:
     def __init__(self):
         self.messages: list = []
         self.owned: set[str] = set()      # slugs this session may edit
+        self.introduced: set[str] = set()  # managed stores already described to the model
         self.approved: set[str] = set()   # drafts the owner approved (via UI button)
         self.busy = False
         self.turns = 0
         self.saw_customer_text = False  # set when customer-written text entered this turn
+        self.model = ""  # the model that answered last, shown on the owner's timeline
         self.last_used = 0.0
+
+
+def _masked(customer: dict) -> dict:
+    """Customer details as the AI sees them: the phone is masked, the AI doesn't need it to help the owner."""
+    phone = str(customer.get("phone", ""))
+    return {"name": customer.get("name", ""), "phone": ("*" * max(0, len(phone) - 4)) + phone[-4:],
+            "note": customer.get("note", "")}
+
+
+# Tools that change a store or an order: blocked once customer-written text entered the turn.
+_WRITE_TOOLS = {"save_draft", "publish_site", "update_site", "update_order"}
 
 
 def _require_owned(s: Session, slug: str):
     if slug not in s.owned or not db.get_site(slug):
         raise PermissionError("You can only manage your own store.")
+
+
+_LIST_FIELDS = ("content", "products")
+_DICT_FIELDS = ("contact", "upi", "theme")
+
+
+def _normalize(fields: dict) -> dict:
+    """Models sometimes send a structured field as a JSON string, or a list with stray strings in it.
+    Decode what can be decoded and drop what still has the wrong shape, so a page never breaks."""
+    out = dict(fields)
+    for k in (*_LIST_FIELDS, *_DICT_FIELDS):
+        if k not in out:
+            continue
+        v = out[k]
+        if isinstance(v, str):
+            try:
+                v = json.loads(v)
+            except ValueError:
+                v = None
+        if k in _LIST_FIELDS:
+            out[k] = [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []
+        else:
+            out[k] = v if isinstance(v, dict) else {}
+    return out
 
 
 def _clean_products(products, taken=()):
@@ -224,7 +265,7 @@ async def _verify(slug: str) -> dict:
         except OSError as e:
             result.update(dns_resolves=False, dns_error=str(e))
     try:
-        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True, transport=_http_transport) as c:
             r = await c.get(url)
         result.update(http_status=r.status_code, https=url.startswith("https://"), ok=r.status_code == 200)
     except httpx.HTTPError as e:
@@ -255,15 +296,19 @@ async def _run_tool(name: str, inp: dict, s: Session):
             raise ValueError("Slug already taken — choose another")
         if existing and existing.get("status") == "live":
             raise ValueError("Store is already live — use update_site for changes")
-        data = {k: v for k, v in inp.items() if k != "slug"}
+        data = _normalize({k: v for k, v in inp.items() if k != "slug"})
         data["products"] = _clean_products(data.get("products"))
         site = db.save_draft(slug, data)
         s.owned.add(slug)
         s.approved.discard(slug)  # any new draft needs fresh approval
-        return {"draft_saved": True, "slug": slug, "preview_url": f"/s/{slug}?preview=1",
-                "needs_approval": True, "products": len(data["products"]),
-                "next": "Ask the owner to review the preview and tap Approve & publish.",
-                "_manage": {"slug": slug, "key": site["edit_key"]}}
+        out = {"draft_saved": True, "slug": slug, "preview_url": f"/s/{slug}?preview=1",
+               "needs_approval": True, "products": len(data["products"]),
+               "next": "Ask the owner to review the preview and tap Approve & publish.",
+               "_manage": {"slug": slug, "key": site["edit_key"]},
+               "_preview": security.preview_token(slug)}
+        if site.get("owner_email") and not site.get("owner_email_verified"):
+            out["owner_email"] = await verify.request_owner_email(slug, site["owner_email"])
+        return out
 
     if name == "publish_site":
         _require_owned(s, slug)
@@ -288,12 +333,15 @@ async def _run_tool(name: str, inp: dict, s: Session):
         site = db.get_site(slug)
         return {k: v for k, v in site.items() if k != "edit_key"}
 
+    if name in _WRITE_TOOLS and s.saw_customer_text:
+        # Customer-written text (an order note, a name) is in this turn's context and could be an
+        # injected instruction. No store or order changes until the owner asks again in their own message.
+        raise PermissionError("No changes in the same turn as reading customer orders. "
+                              "Tell the owner what you found and ask them to confirm in a new message.")
+
     if name == "update_site":
         _require_owned(s, slug)
-        changes = inp.get("set") or {}
-        if s.saw_customer_text and {"upi", "owner_email"} & set(changes):
-            raise PermissionError("Payment and email details can't change in the same turn as reading customer orders. "
-                                  "Ask the owner to confirm in a new message.")
+        changes = _normalize(inp.get("set") or {})
 
         def mutate(site):
             if "notice" in inp:
@@ -309,12 +357,17 @@ async def _run_tool(name: str, inp: dict, s: Session):
             site["products"] = [p for p in prods if p["id"] not in rm]
             for k, v in changes.items():
                 if k in {"business_name", "tagline", "owner_email", "contact", "upi", "theme", "content"}:
+                    if k == "owner_email" and v != site.get("owner_email"):
+                        site["owner_email_verified"] = False  # a new address must be confirmed again
                     site[k] = v
 
         site = db.update_site(slug, mutate)
         if site.get("status") != "live":
             s.approved.discard(slug)  # a changed draft needs the owner's approval again
-        return {"updated": True, "status": site.get("status"), "url": config.site_url(slug),
+        email_note = {}
+        if "owner_email" in changes and site.get("owner_email") and not site.get("owner_email_verified"):
+            email_note["owner_email"] = await verify.request_owner_email(slug, site["owner_email"])
+        return {**email_note, "updated": True, "status": site.get("status"), "url": config.site_url(slug),
                 "products": [{"id": p["id"], "name": p.get("name"), "price": p.get("price")} for p in site.get("products", [])],
                 "notice": site.get("notice", "")}
 
@@ -323,7 +376,7 @@ async def _run_tool(name: str, inp: dict, s: Session):
         s.saw_customer_text = True
         return {"orders": [{"ref": o["ref"], "status": o["status"], "total": o["total"], "createdAt": o["createdAt"],
                             "items": [{"name": l["name"], "qty": l["qty"], "amount": l["amount"]} for l in o["items"]],
-                            "customer_text": o["customer"]}
+                            "customer_text": _masked(o["customer"])}
                            for o in db.list_orders(slug)]}
 
     if name == "update_order":
@@ -333,10 +386,8 @@ async def _run_tool(name: str, inp: dict, s: Session):
         _require_owned(s, order["slug"])
         if inp.get("status") not in {"paid", "delivered", "cancelled", "pending_payment"}:
             raise ValueError("Unknown status")
-        if inp["status"] == "paid" and s.saw_customer_text:
-            raise PermissionError("Orders can't be marked paid in the same turn as reading customer orders. "
-                                  "Ask the owner to confirm the money arrived in a new message.")
-        return db.set_order_status(order["ref"], inp["status"])
+        updated = db.set_order_status(order["ref"], inp["status"])
+        return {"ref": updated["ref"], "status": updated["status"]}  # never echo customer-written text
 
     raise ValueError(f"Unknown tool {name}")
 
@@ -400,8 +451,11 @@ async def run_agent(s: Session, user_text: str, emit: Emit, image_ids: list[str]
     system = [{"type": "text", "text": SYSTEM + f"\n\nStores live at <slug>.{config.ROOT_DOMAIN or 'localhost'}."}]
     try:
         for _ in range(16):
-            _count_call(ip)
+            _count_call(ip, owner=bool(s.owned))
             res = await _call_model(system, s.messages)
+            if res.model != s.model:  # tell the owner's screen which model is really answering
+                s.model = res.model
+                await emit("model", {"model": res.model, "label": "Claude" if res.model.startswith("claude") else "Free model"})
 
             if res.stop_reason == "refusal":
                 del s.messages[start:]  # drop the whole turn so the next message starts clean

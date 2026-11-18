@@ -9,9 +9,11 @@ export function createSseParser(onEvent: (event: AgentEvent) => void) {
   let buffer = "";
   return (chunk: string) => {
     buffer += chunk;
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop() ?? "";
-    for (const part of parts) {
+    const end = buffer.lastIndexOf("\n\n");
+    if (end === -1) return;
+    const complete = buffer.slice(0, end);
+    buffer = buffer.slice(end + 2);
+    for (const part of complete.split("\n\n")) {
       if (!part.startsWith("data: ")) continue;
       let json: unknown;
       try {

@@ -1,7 +1,6 @@
 """Tiny JSON-file store for sites and orders (fine for a hackathon; Postgres-ready shape)."""
 import json
 import os
-import random
 import secrets
 import threading
 from datetime import datetime, timezone
@@ -56,13 +55,33 @@ def slug_taken(slug: str) -> bool:
 def save_draft(slug: str, data: dict) -> dict:
     with _lock:
         old = _sites.get(slug, {})
+        # A confirmed owner email stays confirmed only while it is the same address.
+        verified = bool(old.get("owner_email_verified")) and old.get("owner_email") == data.get("owner_email")
         _sites[slug] = {
-            **data, "slug": slug, "status": "draft",
+            **data, "slug": slug, "status": "draft", "owner_email_verified": verified,
             "edit_key": old.get("edit_key") or secrets.token_urlsafe(16),
             "createdAt": old.get("createdAt", _now()), "updatedAt": _now(),
         }
         _save("sites.json", _sites)
         return _sites[slug]
+
+
+def rotate_key(slug: str) -> str:
+    """Issue a new edit key; the old manage link stops working at once."""
+    with _lock:
+        _sites[slug]["edit_key"] = secrets.token_urlsafe(16)
+        _save("sites.json", _sites)
+        return _sites[slug]["edit_key"]
+
+
+def set_email_verified(slug: str, email: str) -> bool:
+    with _lock:
+        s = _sites.get(slug)
+        if not s or (s.get("owner_email") or "").lower() != email.lower():
+            return False
+        s["owner_email_verified"] = True
+        _save("sites.json", _sites)
+        return True
 
 
 def set_live(slug: str) -> dict:
@@ -94,10 +113,13 @@ def list_live_sites():
 def create_order(order: dict) -> dict:
     with _lock:
         prefix = "".join(w[0] for w in order["slug"].split("-")[:2]).upper() or "VL"
-        while True:
-            ref = f"{prefix}-{random.randint(1000, 9999)}"
+        # 16.7M refs per prefix; a few tries always find a free one, and the loop is bounded.
+        for _ in range(20):
+            ref = f"{prefix}-{secrets.token_hex(3).upper()}"
             if ref not in _orders:
                 break
+        else:
+            raise RuntimeError("Could not allocate an order reference")
         _orders[ref] = {**order, "ref": ref, "status": "pending_payment", "createdAt": _now()}
         _save("orders.json", _orders)
         return _orders[ref]
@@ -118,3 +140,28 @@ def set_order_status(ref: str, status: str) -> dict:
         _orders[ref]["updatedAt"] = _now()
         _save("orders.json", _orders)
         return _orders[ref]
+
+
+# ---------------- Housekeeping ----------------
+def housekeeping(now: float | None = None) -> dict:
+    """Delete photos no store uses after ORPHAN_UPLOAD_HOURS, and strip customer details from
+    orders older than ORDER_PII_DAYS (the order, items and total stay for the owner's records)."""
+    now = now or datetime.now(timezone.utc).timestamp()
+    with _lock:
+        used = {p.get("image_id") for s in _sites.values() for p in s.get("products") or [] if isinstance(p, dict)}
+        removed = 0
+        for name in os.listdir(UPLOAD_DIR):
+            path = os.path.join(UPLOAD_DIR, name)
+            if name.removesuffix(".jpg") not in used and now - os.path.getmtime(path) > config.ORPHAN_UPLOAD_HOURS * 3600:
+                os.remove(path)
+                removed += 1
+        cutoff = now - config.ORDER_PII_DAYS * 86400
+        purged = 0
+        for o in _orders.values():
+            c = o.get("customer") or {}
+            if datetime.fromisoformat(o["createdAt"]).timestamp() < cutoff and c.get("phone") != "(removed)":
+                o["customer"] = {"name": "(removed)", "phone": "(removed)", "note": ""}
+                purged += 1
+        if purged:
+            _save("orders.json", _orders)
+    return {"uploads_removed": removed, "orders_purged": purged}

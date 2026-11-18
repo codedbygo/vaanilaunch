@@ -29,24 +29,29 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
   const dash = useDashboard(creds, managing);
   const launchedHere = state.startedAt !== null;
 
+  const d = dash.data;
+  // The draft awaiting approval: made in this tab, or the owner's draft store after a reload.
+  const draftView = state.live
+    ? null
+    : (state.draft ??
+      (managing && d?.status === "draft"
+        ? {
+            slug: d.slug,
+            previewUrl: `/s/${d.slug}?t=${encodeURIComponent(d.preview_token)}`,
+            approved: false,
+          }
+        : null));
   const running = state.steps.filter((s) => s.status === "running").at(-1);
   const [status, statusLabel]: [StudioStatus, string] = state.live
     ? ["live", "● Live"]
-    : state.draft && !state.draft.approved
+    : draftView && !draftView.approved
       ? ["wait", "Waiting for your approval"]
       : state.busy
         ? ["busy", "Agent working"]
         : ["idle", managing ? "Ready for changes" : "Ready"];
 
-  const d = dash.data;
   const phoneSrc =
-    state.live?.url ??
-    state.draft?.previewUrl ??
-    (managing && d
-      ? d.status === "live"
-        ? d.url
-        : `/s/${d.slug}?key=${encodeURIComponent(creds.key)}`
-      : null);
+    state.live?.url ?? draftView?.previewUrl ?? (managing && d?.status === "live" ? d.url : null);
   const timerMs = state.startedAt === null ? null : (state.launchMs ?? now - state.startedAt);
 
   const timeline = (
@@ -65,6 +70,7 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
           hasDraft: state.draft !== null,
           approved: state.draft?.approved ?? false,
           live: state.live !== null,
+          modelLabel: state.modelLabel,
         })}
       />
       {state.live && (
@@ -150,20 +156,16 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
         </div>
 
         <div className="order-2 flex min-w-0 flex-col items-center gap-3.5 bg-card p-4.5 xl:order-none">
-          <PhonePreview
-            src={phoneSrc}
-            version={`${String(state.previewVersion)}-${String(dash.dataUpdatedAt)}`}
-          />
-          {state.draft &&
-            !state.live &&
-            (state.draft.approved ? (
+          <PhonePreview src={phoneSrc} version={String(state.previewVersion)} />
+          {draftView &&
+            (draftView.approved ? (
               <p role="status" className="font-bold text-success">
                 Approved. Publishing…
               </p>
             ) : (
               <div className="grid w-full max-w-75 grid-cols-[minmax(0,1fr)_auto] gap-2">
                 <Button
-                  onClick={() => void approve()}
+                  onClick={() => void approve(draftView.slug)}
                   disabled={state.busy}
                   className="animate-glow rounded-full bg-brand font-bold text-white"
                 >
@@ -180,7 +182,7 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
                   ✏️ Change
                 </Button>
                 <a
-                  href={state.draft.previewUrl}
+                  href={draftView.previewUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="col-span-2 text-center text-sm text-muted-foreground underline"

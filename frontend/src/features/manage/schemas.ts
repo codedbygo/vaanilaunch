@@ -18,6 +18,9 @@ export const dashboardSchema = z.object({
   status: z.enum(["draft", "live"]),
   url: z.string(),
   products: z.number(),
+  preview_token: z.string(),
+  owner_email: z.string().nullable().optional(),
+  owner_email_verified: z.boolean().optional(),
   orders: z.array(orderSchema),
 });
 export type Dashboard = z.infer<typeof dashboardSchema>;

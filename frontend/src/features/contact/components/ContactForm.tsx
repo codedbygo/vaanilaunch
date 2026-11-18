@@ -1,5 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState, type ReactNode, type SubmitEvent } from "react";
+import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,13 +25,12 @@ export function ContactForm() {
     const form = e.currentTarget;
     const parsed = contactFormSchema.safeParse(Object.fromEntries(new FormData(form)));
     if (!parsed.success) {
-      const next: Errors = {};
-      for (const issue of parsed.error.issues) {
-        const field = issue.path[0];
-        if (field === "name" || field === "email" || field === "message")
-          next[field] ??= issue.message;
-      }
-      setErrors(next);
+      const { fieldErrors } = z.flattenError(parsed.error);
+      setErrors({
+        ...(fieldErrors.name?.[0] ? { name: fieldErrors.name[0] } : {}),
+        ...(fieldErrors.email?.[0] ? { email: fieldErrors.email[0] } : {}),
+        ...(fieldErrors.message?.[0] ? { message: fieldErrors.message[0] } : {}),
+      });
       return;
     }
     setErrors({});

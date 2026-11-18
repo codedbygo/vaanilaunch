@@ -58,4 +58,12 @@ describe("RouteError", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Unexpected error");
   });
+
+  it("shows a plain Error's message", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    renderFailingOnce(new Error("Loader broke"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Loader broke");
+  });
 });

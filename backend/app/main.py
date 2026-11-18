@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import ipaddress
 
 import anthropic
 import json
@@ -9,26 +10,66 @@ import re
 import secrets
 import time
 from collections import defaultdict
+from contextlib import asynccontextmanager
+from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
-from . import config, db, notify
-from .agent import Session, run_agent
-from .site_render import render_site
+from . import config, db, notify, security, verify
+from .agent import BudgetExceeded, Session, run_agent
+from .site_render import as_dict, as_list, render_site, store_csp
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("vaanilaunch")
-app = FastAPI(title="VaaniLaunch")
+HOUSEKEEPING_EVERY = 6 * 3600
+
+
+async def _housekeeping_loop():
+    while True:
+        try:
+            log.info("housekeeping: %s", db.housekeeping())
+        except Exception:  # never let cleanup take the app down
+            log.exception("housekeeping failed")
+        await asyncio.sleep(HOUSEKEEPING_EVERY)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    task = asyncio.create_task(_housekeeping_loop())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="VaaniLaunch", lifespan=lifespan)
 ROOT = config.ROOT_DOMAIN
+
+
+class _RedactKeys(logging.Filter):
+    """Edit keys are owner credentials: keep them out of the access log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(re.sub(r"key=[^&\s\"]+", "key=REDACTED", a) if isinstance(a, str) else a
+                                for a in record.args)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_RedactKeys())
 
 
 def _ip(req: Request) -> str:
     # uvicorn already resolves X-Forwarded-For from trusted proxies (Caddy) into client.host;
     # reading the header ourselves would let any caller spoof it and dodge rate limits.
-    return req.client.host if req.client else "?"
+    host = req.client.host if req.client else "?"
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    # One IPv6 customer usually owns a whole /64; keying on single addresses would let them rotate freely.
+    return str(ipaddress.ip_network(f"{addr}/64", strict=False)) if addr.version == 6 else host
 
 
 _hits: dict[str, list[float]] = defaultdict(list)
@@ -57,19 +98,62 @@ async def subdomain_sites(request: Request, call_next):
         site = db.get_live_site(slug)
         if not site:
             return PlainTextResponse("Store not found", status_code=404)
-        return HTMLResponse(render_site(site))
+        return _store_page(site)
     return await call_next(request)
 
 
-@app.get("/s/{slug}", response_class=HTMLResponse)
-async def preview(slug: str, key: str = ""):
-    """Path-based view. Live stores are public; a draft needs its owner's key (sent by the app's preview)."""
+# Only this app (and the platform domain, which previews live stores) may frame its pages.
+_ANCESTORS = f"'self' https://{ROOT}" if ROOT else "'self'"
+_STORE_ORIGINS = f" https://*.{ROOT}" if ROOT else ""
+# The React app: no inline scripts (Vite emits modules); inline styles come from toasts and React style props.
+_APP_CSP = (f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            f"img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "
+            f"frame-src 'self'{_STORE_ORIGINS}; frame-ancestors {_ANCESTORS}; "
+            f"base-uri 'none'; form-action 'self'; object-src 'none'")
+
+
+# Body limits checked before anything reads the body (a huge body would otherwise be buffered whole).
+_UPLOAD_LIMIT = 4_500_000
+_BODY_LIMIT = 256_000
+
+
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    if request.method == "POST" and request.url.path.startswith("/api/"):
+        size = request.headers.get("content-length")
+        limit = _UPLOAD_LIMIT if request.url.path == "/api/upload" else _BODY_LIMIT
+        if size is None or not size.isdigit():
+            return PlainTextResponse("Content-Length required", status_code=411)
+        if int(size) > limit:
+            return PlainTextResponse("Request too large", status_code=413)
+        # JSON only: a cross-site form or no-cors post can't send this content type without a preflight.
+        if not request.headers.get("content-type", "").startswith("application/json"):
+            return PlainTextResponse("Send JSON", status_code=415)
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    # Draft previews carry a token in the URL; never send it to wa.me or other sites.
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    # Store pages set their own policy (_store_page); everything else is the React app or the API.
+    response.headers.setdefault("Content-Security-Policy", _APP_CSP)
+    response.headers.setdefault("Permissions-Policy", "microphone=(self), camera=(), geolocation=()")
+    return response
+
+
+def _store_page(site: dict, preview: bool = False) -> HTMLResponse:
+    return HTMLResponse(render_site(site, preview=preview), headers={"Content-Security-Policy": store_csp(_ANCESTORS)})
+
+
+@app.api_route("/s/{slug}", methods=["GET", "HEAD"])
+async def preview(slug: str, t: str = ""):
+    """Path-based view. Live stores are public; a draft needs a short-lived preview token (?t=),
+    never the owner's permanent key, so nothing lasting ends up in browser history."""
     site = db.get_site(slug)
     if not site:
         raise HTTPException(404, "Store not found")
-    if site.get("status") != "live" and not (key and secrets.compare_digest(site.get("edit_key", ""), key)):
+    draft = site.get("status") != "live"
+    if draft and not (t and security.check_preview_token(slug, t)):
         raise HTTPException(404, "Store not found")
-    return render_site(site, preview=site.get("status") != "live")
+    return _store_page(site, preview=draft)
 
 
 @app.get("/media/{name}")
@@ -95,12 +179,13 @@ async def sites():
     """Showcase of live stores."""
     out = []
     for s in db.list_live_sites()[:12]:
-        img = next((p["image_id"] for p in s.get("products", []) if p.get("image_id")), None)
+        products = [p for p in as_list(s.get("products")) if isinstance(p, dict)]
+        img = next((p["image_id"] for p in products if p.get("image_id")), None)
         out.append({"slug": s["slug"], "name": s.get("business_name"), "tagline": s.get("tagline"),
-                    "city": (s.get("contact") or {}).get("city"), "url": config.site_url(s["slug"]),
-                    "color": (s.get("theme") or {}).get("primary_color"),
+                    "city": as_dict(s.get("contact")).get("city"), "url": config.site_url(s["slug"]),
+                    "color": as_dict(s.get("theme")).get("primary_color"),
                     "image": f"/media/{img}.jpg" if img else None,
-                    "languages": [c.get("lang_label") for c in s.get("content", [])]})
+                    "languages": [c.get("lang_label") for c in as_list(s.get("content")) if isinstance(c, dict)]})
     return out
 
 
@@ -136,12 +221,24 @@ async def upload(body: UploadIn, request: Request):
 sessions: dict[str, Session] = {}
 
 
+class PowIn(BaseModel):
+    challenge: str = Field(max_length=120)
+    nonce: str = Field(max_length=32)
+
+
 class AgentIn(BaseModel):
     sessionId: str = Field(min_length=8, max_length=64)
     text: str = Field(min_length=1, max_length=4000)
-    images: list[str] = Field(default_factory=list, max_length=6)
+    images: list[Annotated[str, Field(max_length=32)]] = Field(default_factory=list, max_length=6)
     manageSlug: str | None = None
     manageKey: str | None = None
+    pow: PowIn | None = None
+
+
+@app.get("/api/pow")
+async def pow_challenge():
+    """A small puzzle a new visitor's browser solves before its first message (see security.py)."""
+    return security.pow_challenge()
 
 
 @app.post("/api/agent")
@@ -152,19 +249,27 @@ async def agent(body: AgentIn, request: Request):
         idle = sorted((v.last_used, k) for k, v in sessions.items() if not v.busy)
         for _, k in idle[:500]:
             del sessions[k]
+    managing = bool(body.manageSlug and body.manageKey)
+    site = None
+    if managing:
+        site = db.get_site(body.manageSlug)
+        if not site or not secrets.compare_digest(site.get("edit_key", ""), body.manageKey):
+            raise HTTPException(403, "Invalid manage link")
+    # A brand-new visitor (no session yet, no manage link) must solve the proof-of-work puzzle first.
+    if body.sessionId not in sessions and not managing:
+        if config.POW_BITS > 0 and not (body.pow and security.check_pow(body.pow.challenge, body.pow.nonce)):
+            raise HTTPException(428, "Please reload the page and try again.")
     s = sessions.setdefault(body.sessionId, Session())
     if s.busy:
         raise HTTPException(429, "Agent is still working")
     s.last_used = time.time()
 
     text = body.text
-    if body.manageSlug and body.manageKey:
-        site = db.get_site(body.manageSlug)
-        if not site or not secrets.compare_digest(site.get("edit_key", ""), body.manageKey):
-            raise HTTPException(403, "Invalid manage link")
-        if body.manageSlug not in s.owned:
-            s.owned.add(body.manageSlug)
-            text = f"[Owner is managing their existing store: slug={body.manageSlug}, status={site.get('status')}]\n{text}"
+    if managing and body.manageSlug not in s.introduced:
+        # Tell the model which store this is, once per session (ownership alone may come from /api/approve).
+        s.owned.add(body.manageSlug)
+        s.introduced.add(body.manageSlug)
+        text = f"[Owner is managing their existing store: slug={body.manageSlug}, status={site.get('status')}]\n{text}"
 
     s.busy = True
     queue: asyncio.Queue = asyncio.Queue()
@@ -181,9 +286,15 @@ async def agent(body: AgentIn, request: Request):
         except (anthropic.RateLimitError, anthropic.InternalServerError, anthropic.APIConnectionError):
             log.exception("Claude unavailable")
             await emit("error", "Claude is busy right now. Please try again in a minute.")
-        except Exception as e:
-            log.exception("agent failed")
+        except BudgetExceeded as e:
             await emit("error", str(e))
+        except PermissionError as e:  # the free model's key was rejected
+            log.error("%s", e)
+            await emit("error", "The server's AI key is invalid. The owner of this server needs to fix it.")
+        except Exception:
+            # Details (provider bodies, stack traces) go to the server log, never to the visitor.
+            log.exception("agent failed")
+            await emit("error", "The AI is busy or unavailable right now. Please try again in a minute.")
         finally:
             s.busy = False
             await queue.put(None)
@@ -202,16 +313,24 @@ async def agent(body: AgentIn, request: Request):
 
 
 class ApproveIn(BaseModel):
-    sessionId: str
-    slug: str
+    sessionId: str = Field(min_length=8, max_length=64)
+    slug: str = Field(max_length=64)
+    key: str | None = Field(default=None, max_length=128)  # the owner's private key, if the browser has it
 
 
 @app.post("/api/approve")
 async def approve(body: ApproveIn):
-    """Human-in-the-loop: only a real button press by the owner unlocks publishing."""
+    """Human-in-the-loop: only a real button press by the owner unlocks publishing.
+    Sessions live in memory, so after a server restart the owner's private key re-proves ownership."""
+    site = db.get_site(body.slug)
     s = sessions.get(body.sessionId)
-    if not s or body.slug not in s.owned or not db.get_site(body.slug):
+    if site and body.key and secrets.compare_digest(site.get("edit_key", ""), body.key):
+        s = sessions.setdefault(body.sessionId, Session())
+        s.owned.add(body.slug)
+    if not s or body.slug not in s.owned or not site:
         raise HTTPException(403, "Not your draft")
+    if s.busy:  # the draft may still be changing; approve what the owner actually saw
+        raise HTTPException(409, "The agent is still working on your store. Approve when it finishes.")
     s.approved.add(body.slug)
     return {"approved": True}
 
@@ -238,7 +357,7 @@ async def create_order(body: OrderIn, request: Request):
         raise HTTPException(404, "Store not found")
     if site.get("status") != "live":
         raise HTTPException(403, "This store is a preview and not taking orders yet.")
-    catalog = {p["id"]: p for p in site.get("products", []) if isinstance(p, dict) and p.get("id") and p.get("available", True)}
+    catalog = {p["id"]: p for p in as_list(site.get("products")) if isinstance(p, dict) and p.get("id") and p.get("available", True)}
     lines, total = [], 0.0
     for it in body.items:  # prices always come from the server, never the browser
         p = catalog.get(it.id)
@@ -251,7 +370,7 @@ async def create_order(body: OrderIn, request: Request):
 
     order = db.create_order({"slug": body.slug, "items": lines, "total": total,
                              "customer": {"name": body.name, "phone": body.phone, "note": body.note}})
-    upi = site.get("upi") or {}
+    upi = as_dict(site.get("upi"))
     pay = None
     if upi.get("vpa") and total > 0:
         link = notify.upi_link(upi["vpa"], upi.get("payee_name") or site["business_name"], total, f"Order {order['ref']}")
@@ -260,8 +379,10 @@ async def create_order(body: OrderIn, request: Request):
     item_txt = "\n".join(f"  • {l['name']} × {l['qty']} = ₹{l['amount']:g}" for l in lines)
     body_txt = (f"New order {order['ref']} for {site['business_name']}\n\n{item_txt}\n\nTotal: ₹{total:g}\n"
                 f"Payment: pending (check your UPI app for ₹{total:g} with note 'Order {order['ref']}')\n\n"
-                f"Customer: {body.name}\nPhone: {body.phone}\nNote: {body.note or '-'}\n")
-    mailed = await notify.send_mail(site.get("owner_email") or config.MAIL_TO,
+                f"Customer phone: {body.phone}\n\n"
+                f"--- Written by the customer, not by VaaniLaunch. Don't open links you don't trust. ---\n"
+                f"Name: {body.name}\nNote: {body.note or '-'}\n")
+    mailed = await notify.send_mail(verify.owner_inbox(site),
                                     f"🛒 New order {order['ref']} – ₹{total:g}", body_txt, bcc=config.MAIL_TO)
     return {"ref": order["ref"], "total": total, "items": lines, "status": "pending_payment",
             "pay": pay, "owner_notified": mailed}
@@ -283,9 +404,9 @@ async def contact(body: ContactIn, request: Request):
     site = db.get_live_site(body.slug) if body.slug else None
     where = f"{site['business_name']} ({body.slug})" if site else "VaaniLaunch main site"
     ok = await notify.send_mail(
-        (site or {}).get("owner_email") or config.MAIL_TO,
+        verify.owner_inbox(site) if site else config.MAIL_TO,
         f"New enquiry{' for ' + site['business_name'] if site else ''} from {body.name}",
-        f"From: {body.name} <{body.email}>\nSite: {where}\n\n{body.message}",
+        f"Site: {where}\nReply-to: {body.email}\n\n--- Written by the visitor, not by VaaniLaunch. Don't open links you don't trust. ---\nFrom: {body.name}\n\n{body.message}",
         reply_to=body.email, bcc=config.MAIL_TO if site else None,
     )
     if not ok:
@@ -301,13 +422,39 @@ def _owner_site(slug: str, key: str) -> dict:
     return site
 
 
-@app.get("/api/manage")
-async def manage(slug: str, key: str):
-    """Store summary and recent orders for the owner's dashboard."""
-    site = _owner_site(slug, key)
+class ManageIn(BaseModel):
+    slug: str = Field(max_length=64)
+    key: str = Field(max_length=128)
+
+
+@app.post("/api/manage")
+async def manage(body: ManageIn):
+    """Store summary and recent orders for the owner's dashboard. POST so the key never sits in a URL or log."""
+    slug = body.slug
+    site = _owner_site(slug, body.key)
     return {"slug": slug, "name": site.get("business_name"), "status": site.get("status"),
             "url": config.site_url(slug), "products": len(site.get("products") or []),
+            "preview_token": security.preview_token(slug),
+            "owner_email": site.get("owner_email"), "owner_email_verified": bool(site.get("owner_email_verified")),
             "orders": db.list_orders(slug, limit=30)}
+
+
+@app.post("/api/manage/rotate")
+async def rotate(body: ManageIn):
+    """Replace the owner's private link, e.g. after it was shared by mistake. The old link stops working."""
+    _owner_site(body.slug, body.key)
+    return {"slug": body.slug, "key": db.rotate_key(body.slug)}
+
+
+@app.get("/api/verify-email", response_class=HTMLResponse)
+async def verify_email(slug: str = "", email: str = "", t: str = ""):
+    """The link in the confirmation email. Only after this do orders go to the owner's address."""
+    ok = bool(slug and email and t) and security.check_email_token(slug, email, t) and db.set_email_verified(slug, email)
+    msg = ("✅ Email confirmed. Order emails for your store will now come to this address."
+           if ok else "This confirmation link is invalid or out of date.")
+    return HTMLResponse(f"<!doctype html><meta charset=utf-8><title>VaaniLaunch</title>"
+                        f"<p style='font:18px system-ui;margin:3rem auto;max-width:32rem'>{msg}</p>",
+                        status_code=200 if ok else 400)
 
 
 class OrderStatusIn(BaseModel):
@@ -336,5 +483,12 @@ async def qr(data: str = ""):
 
 
 # ---------- React frontend (built files) ----------
-if os.path.isdir(config.STATIC_DIR):
-    app.mount("/", StaticFiles(directory=config.STATIC_DIR, html=True), name="frontend")
+def mount_frontend(path: str) -> bool:
+    """Serve the built React app at / when it exists (it doesn't in a backend-only dev run)."""
+    if not os.path.isdir(path):
+        return False
+    app.mount("/", StaticFiles(directory=path, html=True), name="frontend")
+    return True
+
+
+mount_frontend(config.STATIC_DIR)

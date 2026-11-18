@@ -1,9 +1,13 @@
 import os
 
 
-def _load_dotenv(path: str):
+def load_dotenv(path: str | None = None):
     """Read KEY=value lines from the project .env for local runs. Variables already set in the
-    environment win (that's how Docker's env_file and CI pass them)."""
+    environment win (that's how Docker's env_file and CI pass them). Tests set VAANI_NO_DOTENV."""
+    if path is None:
+        if os.getenv("VAANI_NO_DOTENV"):
+            return
+        path = os.getenv("VAANI_DOTENV") or os.path.join(os.path.dirname(__file__), "..", "..", ".env")
     try:
         with open(path, encoding="utf-8") as f:
             for line in f:
@@ -15,8 +19,7 @@ def _load_dotenv(path: str):
         pass
 
 
-if not os.getenv("VAANI_NO_DOTENV"):  # tests set this to stay isolated from your real .env
-    _load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+load_dotenv()
 
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 # medium suits multi-step tool use; use low to save credits while developing
@@ -63,6 +66,14 @@ MAX_CLAUDE_CALLS_PER_DAY = int(os.getenv("MAX_CLAUDE_CALLS_PER_DAY", "600"))
 MAX_CLAUDE_CALLS_PER_IP_PER_DAY = int(os.getenv("MAX_CLAUDE_CALLS_PER_IP_PER_DAY", "150"))
 AGENT_REQUESTS_PER_HOUR_PER_IP = int(os.getenv("AGENT_REQUESTS_PER_HOUR_PER_IP", "60"))
 MAX_TURNS_PER_SESSION = int(os.getenv("MAX_TURNS_PER_SESSION", "40"))
+# Share of the daily AI budget new visitors may use; the rest is kept for owners of existing stores.
+NEW_VISITOR_BUDGET_SHARE = float(os.getenv("NEW_VISITOR_BUDGET_SHARE", "0.8"))
+# Proof-of-work difficulty for a new visitor's first message (leading zero bits; 0 turns it off).
+POW_BITS = int(os.getenv("POW_BITS", "16"))
+# Customer name, phone and note are removed from orders older than this.
+ORDER_PII_DAYS = int(os.getenv("ORDER_PII_DAYS", "90"))
+# Uploaded photos not used by any store are deleted after this many hours.
+ORPHAN_UPLOAD_HOURS = int(os.getenv("ORPHAN_UPLOAD_HOURS", "24"))
 
 
 def public_base() -> str:

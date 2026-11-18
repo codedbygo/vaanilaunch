@@ -12,6 +12,10 @@ https:// {
 		on_demand
 	}
 	encode gzip
+	# Second layer behind the app's own limits: nothing bigger than a photo upload reaches it.
+	request_body {
+		max_size 5MB
+	}
 	reverse_proxy app:8000
 }
 

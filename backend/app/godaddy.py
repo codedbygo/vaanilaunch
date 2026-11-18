@@ -9,6 +9,9 @@ import httpx
 from . import config
 
 
+_transport: httpx.AsyncBaseTransport | None = None  # tests inject a mock transport here
+
+
 class GoDaddyError(Exception):
     pass
 
@@ -20,7 +23,7 @@ async def _gd(method: str, path: str, **kw):
         "Authorization": f"sso-key {config.GODADDY_API_KEY}:{config.GODADDY_API_SECRET}",
         "Accept": "application/json",
     }
-    async with httpx.AsyncClient(base_url=config.GODADDY_API_BASE, timeout=15) as c:
+    async with httpx.AsyncClient(base_url=config.GODADDY_API_BASE, timeout=15, transport=_transport) as c:
         r = await c.request(method, path, headers=headers, **kw)
     if r.status_code >= 400:
         try:
