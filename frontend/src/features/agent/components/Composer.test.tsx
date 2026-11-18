@@ -27,7 +27,7 @@ describe("Composer", () => {
     useManageStore.getState().clear();
   });
 
-  it("uploads photos, switches language and sends photos without typing", async () => {
+  it("one language choice switches the page, the agent hint and the app messages; sends photos without typing", async () => {
     stubImagePipeline();
     const uploads: unknown[] = [];
     const agentBodies: unknown[] = [];
@@ -50,25 +50,28 @@ describe("Composer", () => {
     const user = userEvent.setup();
     const studio = await screen.findByRole("region", { name: "Launch studio" });
 
-    await user.click(within(studio).getByRole("radio", { name: "हिन्दी" }));
+    // The one language picker, in the top bar.
+    await user.selectOptions(screen.getByRole("combobox", { name: "Language" }), "hi-IN");
+    // The whole app follows: document language, page text, and the studio's own labels.
+    expect(document.documentElement.lang).toBe("hi-IN");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("बस उसके बारे में बताइए।");
+    expect(localStorage.getItem("vl_lang")).toBe("hi-IN");
     const file = new File(["x"], "idli.jpg", { type: "image/jpeg" });
     const input = studio.querySelector<HTMLInputElement>('input[type="file"]');
     if (!input) throw new Error("no file input");
     await user.upload(input, file);
 
-    expect(await within(studio).findByRole("button", { name: "Remove photo" })).toBeInTheDocument();
+    expect(await within(studio).findByRole("button", { name: "फ़ोटो हटाएँ" })).toBeInTheDocument();
     expect(uploads).toEqual([{ dataUrl: "data:image/jpeg;base64,/9j/AA==" }]);
 
-    await user.click(within(studio).getByRole("button", { name: "Send" }));
+    await user.click(within(studio).getByRole("button", { name: "भेजें" }));
     expect(await within(studio).findByText("Nice photos")).toBeInTheDocument();
     expect(agentBodies[0]).toMatchObject({
       images: ["0123456789abcdef"],
-      text: "📷 Here are my product photos.\n\n[Preferred language: Hindi]",
+      text: "📷 ये मेरे प्रोडक्ट की फ़ोटो हैं।\n\n[Preferred language: Hindi]",
     });
     await waitFor(() => {
-      expect(
-        within(studio).queryByRole("button", { name: "Remove photo" }),
-      ).not.toBeInTheDocument();
+      expect(within(studio).queryByRole("button", { name: "फ़ोटो हटाएँ" })).not.toBeInTheDocument();
     });
   });
 

@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
-from . import config, db, notify, observability, security, verify
+from . import config, db, mail_text, notify, observability, security, verify
 from .agent import BudgetExceeded, Session, run_agent
 from .site_render import as_dict, as_list, render_site, store_csp
 
@@ -164,7 +164,8 @@ async def guard(request: Request, call_next):
 
 
 def _store_page(site: dict, preview: bool = False) -> HTMLResponse:
-    return HTMLResponse(render_site(site, preview=preview), headers={"Content-Security-Policy": store_csp(_ANCESTORS)})
+    page = render_site(site, preview=preview, url=config.site_url(site.get("slug") or ""), media_base=config.public_base())
+    return HTMLResponse(page, headers={"Content-Security-Policy": store_csp(_ANCESTORS)})
 
 
 @app.api_route("/s/{slug}", methods=["GET", "HEAD"])
@@ -419,13 +420,10 @@ async def create_order(body: OrderIn, request: Request):
         pay = {"upi_link": link, "qr_svg": notify.qr_svg(link), "vpa": upi["vpa"]}
 
     item_txt = "\n".join(f"  • {l['name']} × {l['qty']} = ₹{l['amount']:g}" for l in lines)
-    body_txt = (f"New order {order['ref']} for {site['business_name']}\n\n{item_txt}\n\nTotal: ₹{total:g}\n"
-                f"Payment: pending (check your UPI app for ₹{total:g} with note 'Order {order['ref']}')\n\n"
-                f"Customer phone: {body.phone}\n\n"
-                f"--- Written by the customer, not by VaaniLaunch. Don't open links you don't trust. ---\n"
-                f"Name: {body.name}\nNote: {body.note or '-'}\n")
-    mailed = await notify.send_mail(verify.owner_inbox(site),
-                                    f"🛒 New order {order['ref']} – ₹{total:g}", body_txt, bcc=config.MAIL_TO)
+    # In the owner's language with English below (the copy to the platform inbox reads it too).
+    subject, body_txt = mail_text.order_mail(site, order["ref"], item_txt, total, body.phone,
+                                             body.name, body.note)
+    mailed = await notify.send_mail(verify.owner_inbox(site), subject, body_txt, bcc=config.MAIL_TO)
     return {"ref": order["ref"], "total": total, "items": lines, "status": "pending_payment",
             "pay": pay, "owner_notified": mailed}
 
@@ -469,6 +467,25 @@ class ManageIn(BaseModel):
     key: str = Field(max_length=128)
 
 
+def launch_checklist(site: dict) -> list[dict]:
+    """What the store really has, item by item; the dashboard's readiness score is done/total.
+    The SEO items count what the page actually renders (it falls back to the tagline)."""
+    c, seo = as_dict(site.get("contact")), as_dict(site.get("seo"))
+    langs = [b for b in as_list(site.get("content")) if isinstance(b, dict)]
+    items = {
+        "name": site.get("business_name"),
+        "description": any(str(b.get("about") or "").strip() for b in langs),
+        "photos": any(isinstance(p, dict) and p.get("image_id") for p in as_list(site.get("products"))),
+        "phone": c.get("phone") or c.get("whatsapp"),
+        "hours": c.get("hours"),
+        "location": c.get("city") or c.get("address"),
+        "seo_title": seo.get("title") or (site.get("business_name") and site.get("tagline")),
+        "seo_description": seo.get("description") or site.get("tagline"),
+        "published": site.get("status") == "live",
+    }
+    return [{"key": k, "done": bool(v)} for k, v in items.items()]
+
+
 @app.post("/api/manage")
 async def manage(body: ManageIn):
     """Store summary and recent orders for the owner's dashboard. POST so the key never sits in a URL or log."""
@@ -478,7 +495,7 @@ async def manage(body: ManageIn):
             "url": config.site_url(slug), "products": len(site.get("products") or []),
             "preview_token": security.preview_token(slug),
             "owner_email": site.get("owner_email"), "owner_email_verified": bool(site.get("owner_email_verified")),
-            "orders": db.list_orders(slug, limit=30)}
+            "orders": db.list_orders(slug, limit=30), "checklist": launch_checklist(site)}
 
 
 @app.post("/api/manage/rotate")

@@ -37,7 +37,8 @@ describe("ErrorBoundary", () => {
       </ErrorBoundary>,
     );
 
-    expect(screen.getByRole("alert")).toHaveTextContent("kaboom");
+    expect(screen.getByRole("alert")).toHaveTextContent("Something went wrong. Please try again.");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("kaboom");
     expect(onError).toHaveBeenCalledTimes(1);
     explode = false;
     await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -69,6 +70,6 @@ describe("ErrorBoundary", () => {
       </ErrorBoundary>,
     );
 
-    expect(screen.getByRole("alert")).toHaveTextContent("plain string");
+    expect(screen.getByRole("alert")).toHaveTextContent("Something went wrong");
   });
 });

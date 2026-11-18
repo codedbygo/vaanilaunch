@@ -22,5 +22,24 @@ export const dashboardSchema = z.object({
   owner_email: z.string().nullable().optional(),
   owner_email_verified: z.boolean().optional(),
   orders: z.array(orderSchema),
+  // What the store really has; older servers don't send it.
+  checklist: z
+    .array(
+      z.object({
+        key: z.enum([
+          "name",
+          "description",
+          "photos",
+          "phone",
+          "hours",
+          "location",
+          "seo_title",
+          "seo_description",
+          "published",
+        ]),
+        done: z.boolean(),
+      }),
+    )
+    .optional(),
 });
 export type Dashboard = z.infer<typeof dashboardSchema>;

@@ -52,8 +52,14 @@ describe("App", () => {
   it("renders the story and the launch studio", async () => {
     renderAt("/");
     expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent(
-      "Speak your business.",
+      "Your business deserves a website.",
     );
+    expect(
+      screen.getByRole("heading", { name: /Everything a small business needs/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /Your next customer is searching/ }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Launch studio" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Main" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Responsible by design" })).toBeInTheDocument();
@@ -95,7 +101,7 @@ describe("App", () => {
     );
     expect(await within(studio).findByText(/approve/, { selector: "b" })).toBeInTheDocument();
     expect(bodies[0]).toMatchObject({
-      text: "I sell idli batter in Vijayawada\n\n[Preferred language: Telugu]",
+      text: "I sell idli batter in Vijayawada\n\n[Preferred language: English]",
       images: [],
     });
     expect(within(studio).getByTitle("Store preview")).toHaveAttribute(

@@ -10,8 +10,32 @@ def _e(s) -> str:
     return escape(str(s if s is not None else ""), quote=True)
 
 
-def _color(c) -> str:
-    return c if isinstance(c, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", c) else "#e8590c"
+def _color(c, default: str = "#e8590c") -> str:
+    return c if isinstance(c, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", c) else default
+
+
+# Each business category gets its own default look; the owner can change it by voice
+# ("make it look premium"). Styles change type, layout and shape, not just the colour.
+STYLES = ("classic", "modern", "premium", "playful")
+_CATEGORY_STYLE = {"restaurant": "classic", "home_food": "classic", "boutique": "premium", "salon": "premium",
+                   "coaching": "modern", "clinic": "modern", "services": "modern", "retail": "playful"}
+_SCHEMA_TYPE = {"restaurant": "Restaurant", "home_food": "FoodEstablishment", "boutique": "ClothingStore",
+                "salon": "BeautySalon", "coaching": "EducationalOrganization", "clinic": "MedicalClinic",
+                "services": "LocalBusiness", "retail": "Store"}
+
+
+def style_of(site: dict) -> str:
+    chosen = as_dict(site.get("theme")).get("style")
+    return chosen if chosen in STYLES else _CATEGORY_STYLE.get(str(site.get("category")), "classic")
+
+
+def _social(v, base: str) -> str:
+    """A full http(s) link, or a bare handle turned into one; anything else is dropped."""
+    v = str(v or "").strip()
+    if re.fullmatch(r"https?://[^\s\"'<>]{3,200}", v):
+        return v
+    handle = v.lstrip("@")
+    return f"{base}{handle}" if re.fullmatch(r"[A-Za-z0-9._]{1,40}", handle) else ""
 
 
 def _price(v) -> str:
@@ -48,6 +72,8 @@ def _lang_block(l: dict, i: int, products: list, facts: str = "") -> str:
     services = "".join(service(s) for s in as_list(l.get("services")) if isinstance(s, dict))
     faqs = "".join(f"<details><summary>{_e(f.get('q'))}</summary><p>{_e(f.get('a'))}</p></details>"
                    for f in as_list(l.get("faqs")) if isinstance(f, dict))
+    quotes = "".join(f"<figure class=card><blockquote>“{_e(t.get('text'))}”</blockquote><figcaption>{_e(t.get('name'))}</figcaption></figure>"
+                     for t in as_list(l.get("testimonials")) if isinstance(t, dict) and t.get("text"))
     cta = f'<a class="btn" href="#menu-{i}">{_e(l.get("cta") or "Order now")}</a>' if products else ""
     return f"""
 <div class="lang" data-lang="{_e(l.get('lang_code'))}" {'hidden' if i else ''}>
@@ -56,12 +82,13 @@ def _lang_block(l: dict, i: int, products: list, facts: str = "") -> str:
   {f'<section id="menu-{i}"><h2>{_e(l.get("products_heading") or "Our products")}</h2><div class="prods">{prods}</div></section>' if prods else ''}
   {f'<section><h2>{_e(l.get("services_heading") or "Services")}</h2><div class="grid">{services}</div></section>' if services else ''}
   <section><h2>{_e(l.get('about_heading') or 'About')}</h2><p>{_e(l.get('about'))}</p></section>
+  {f'<section><h2>{_e(l.get("testimonials_heading") or "What customers say")}</h2><div class="grid">{quotes}</div></section>' if quotes else ''}
   {f'<section><h2>{_e(l.get("faq_heading") or "FAQ")}</h2>{faqs}</section>' if faqs else ''}
 </div>"""
 
 
 CSS = """
-*{box-sizing:border-box}body{margin:0;font-family:system-ui,'Noto Sans','Noto Sans Telugu','Noto Sans Devanagari',sans-serif;color:#222;background:#fffaf5;line-height:1.55;padding-bottom:80px}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,'Noto Sans','Noto Sans Telugu','Noto Sans Devanagari',sans-serif;color:#222;background:var(--bg);line-height:1.55;padding-bottom:80px}
 .notice{background:#222;color:#fff;text-align:center;padding:8px 12px;font-size:.92rem}
 .preview{background:#fff3bf;color:#5c4400;text-align:center;padding:8px;font-size:.9rem;font-weight:600}
 nav{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 16px;background:#fff;box-shadow:0 1px 4px #0001;position:sticky;top:0;z-index:5}
@@ -99,6 +126,15 @@ dialog{border:0;border-radius:16px;padding:20px;width:min(440px,92vw);max-height
 .privacy{color:#777;font-size:.78rem}
 .oerr{color:#b00020;background:#fdecee;border-radius:8px;padding:8px 10px;margin:0;font-size:.9rem}
 footer{text-align:center;padding:24px;color:#777;font-size:.85rem}
+blockquote{margin:0 0 8px;font-size:1rem}figcaption{color:#666;font-size:.88rem}figure{margin:0}.social a{margin-right:12px}
+.st-modern .hero{text-align:left;padding:80px max(20px,calc(50% - 480px)) 64px}.st-modern .prod,.st-modern .card,.st-modern details{border-radius:6px}
+.st-modern h2{letter-spacing:-.02em;font-size:1.6rem}.st-modern .btn{border-radius:8px}
+.st-premium{--serif:Georgia,'Noto Serif','Noto Serif Telugu','Noto Serif Devanagari',serif}.st-premium h1,.st-premium h2,.st-premium .brand{font-family:var(--serif);font-weight:600}
+.st-premium .hero{background:linear-gradient(180deg,#141414,color-mix(in srgb,var(--p) 35%,#141414));padding:96px 18px 84px}.st-premium .hero h1{letter-spacing:.01em}
+.st-premium h2{text-transform:uppercase;letter-spacing:.12em;font-size:1rem;color:#333;border-bottom:1px solid color-mix(in srgb,var(--p) 40%,#fff);padding-bottom:10px}
+.st-premium section{padding:44px 18px}.st-premium .prod,.st-premium .card{border-radius:4px;box-shadow:none;border:1px solid #0000000f}.st-premium .btn{border-radius:2px;letter-spacing:.06em;text-transform:uppercase;font-size:.85rem}
+.st-playful .hero{border-radius:0 0 36px 36px;background:radial-gradient(circle at 20% 20%,color-mix(in srgb,var(--p) 60%,#fff),var(--p))}
+.st-playful .prod,.st-playful .card,.st-playful details{border-radius:22px}.st-playful h2{font-size:1.7rem}.st-playful .btn{box-shadow:0 6px 0 #0002}
 """
 
 JS = """
@@ -147,8 +183,13 @@ def as_dict(v) -> dict:
     return v if isinstance(v, dict) else {}
 
 
-def render_site(site: dict, preview: bool = False) -> str:
-    color = _color(as_dict(site.get("theme")).get("primary_color"))
+def render_site(site: dict, preview: bool = False, url: str = "", media_base: str = "") -> str:
+    """url is the store's public address and media_base the origin that serves /media; both make
+    share and search tags absolute (crawlers ignore relative ones)."""
+    theme = as_dict(site.get("theme"))
+    color = _color(theme.get("primary_color"))
+    style = style_of(site)
+    background = _color(theme.get("background"), "#fafafa" if style in ("modern", "premium") else "#fffaf5")
     # Defence in depth: skip any malformed entry instead of failing the whole page.
     langs = [l for l in as_list(site.get("content")) if isinstance(l, dict)] or [
         {"lang_code": "en", "lang_label": "English", "hero_title": site.get("business_name"),
@@ -183,20 +224,38 @@ def render_site(site: dict, preview: bool = False) -> str:
     hero_bg = (f".hero{{background:linear-gradient(160deg,color-mix(in srgb,{color} 85%,#000c),#000b),"
                f"url(/media/{hero_img}.jpg) center/cover}}") if hero_img else ""
     phone = f'<p>📞 <a href="tel:{_e(c["phone"])}">{_e(c["phone"])}</a></p>' if c.get("phone") else ""
+    links = [(n, _social(c.get(k), b)) for n, k, b in (("Instagram", "instagram", "https://instagram.com/"),
+                                                       ("Facebook", "facebook", "https://facebook.com/"))]
+    social = "".join(f'<a href="{_e(h)}" target="_blank" rel="noopener">{n}</a>' for n, h in links if h)
+    social = f'<p class="social">{social}</p>' if social else ""
+    seo = as_dict(site.get("seo"))
+    title = seo.get("title") or (f"{name} – {site.get('tagline')}" if site.get("tagline") else name)
+    description = seo.get("description") or site.get("tagline") or ""
+    image = next((f"{media_base}/media/{p['image_id']}.jpg" for p in products if p.get("image_id")), "")
+    business = {"@context": "https://schema.org", "@type": _SCHEMA_TYPE.get(str(site.get("category")), "LocalBusiness"),
+                "name": name, "description": description, "url": url or None, "image": image or None,
+                "telephone": c.get("phone") or c.get("whatsapp") or None,
+                "address": {"@type": "PostalAddress", "streetAddress": c.get("address"), "addressLocality": c.get("city"),
+                            "addressCountry": "IN"} if (c.get("address") or c.get("city")) else None,
+                "sameAs": [h for _, h in links if h] or None}
+    ld = json.dumps({k: v for k, v in business.items() if v}, ensure_ascii=False).replace("<", "\\u003c")
 
     return f"""<!doctype html><html lang="{_e(langs[0].get('lang_code') or 'en')}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{_e(name)} – {_e(site.get('tagline'))}</title>
-<meta name="description" content="{_e(site.get('tagline'))}">
-<meta property="og:title" content="{_e(name)}"><meta property="og:description" content="{_e(site.get('tagline'))}">
-{f'<meta property="og:image" content="/media/{_e(products[0]["image_id"])}.jpg">' if products and products[0].get("image_id") else ''}
+<title>{_e(title)}</title>
+<meta name="description" content="{_e(description)}">
+{f'<meta name="keywords" content="{_e(seo["keywords"])}">' if seo.get("keywords") else ''}
+{'<meta name="robots" content="noindex">' if preview else (f'<link rel="canonical" href="{_e(url)}">' if url else '')}
+<meta property="og:type" content="website"><meta property="og:title" content="{_e(title)}"><meta property="og:description" content="{_e(description)}">
+{f'<meta property="og:url" content="{_e(url)}">' if url else ''}{f'<meta property="og:image" content="{_e(image)}"><meta name="twitter:card" content="summary_large_image">' if image else ''}
 <meta name="theme-color" content="{color}">
-<style>:root{{--p:{color}}}{CSS}{hero_bg}</style></head><body>
+<script type="application/ld+json">{ld}</script>
+<style>:root{{--p:{color};--bg:{background}}}{CSS}{hero_bg}</style></head><body class="st-{style}">
 {'<div class="preview">👀 Preview — not live yet. Approve it in VaaniLaunch to publish.</div>' if preview else ''}
 {f'<div class="notice">📢 {_e(site["notice"])}</div>' if site.get("notice") else ''}
 <nav><div class="brand"><span class="logo">{_e(name[:1])}</span><span class="bn">{_e(name)}</span></div><div class="langs">{lang_buttons}{f'<a class="wa" href="https://wa.me/{wa}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a>' if wa else ''}</div></nav>
 {''.join(_lang_block(l, i, products, facts) for i, l in enumerate(langs))}
-<section id="contact"><h2>Contact</h2>{f'<p>📍 {place}</p>' if place else ''}{phone}{hours}
+<section id="contact"><h2>Contact</h2>{f'<p>📍 {place}</p>' if place else ''}{phone}{hours}{social}
 <form id="cf"><input name="name" placeholder="Your name" required><input name="email" type="email" placeholder="Email" required>
 <textarea name="message" rows="3" placeholder="Message" required></textarea><button class="pbtn">Send message</button><small id="cs"></small></form></section>
 <footer>{_e(site.get('tagline'))}<br>Launched with 🎙️ VaaniLaunch</footer>

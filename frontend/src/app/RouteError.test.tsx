@@ -39,13 +39,15 @@ function renderFailingOnce(error: unknown) {
 }
 
 describe("RouteError", () => {
-  it("names an ApiError, keeps the home link, and retries", async () => {
+  it("shows a friendly message for an ApiError (never the log text), keeps the home link, and retries", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const user = userEvent.setup();
 
     renderFailingOnce(new ApiError("http", 503, "GET /things: 503"));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("GET /things: 503");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Something went wrong. Please try again.",
+    );
     expect(screen.getByRole("link", { name: "Back to the start" })).toHaveAttribute("href", "/");
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("recovered")).toBeInTheDocument();
@@ -56,14 +58,18 @@ describe("RouteError", () => {
 
     renderFailingOnce({ odd: true });
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Unexpected error");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Something went wrong. Please try again.",
+    );
   });
 
-  it("shows a plain Error's message", async () => {
+  it("never shows a plain Error's internal message", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     renderFailingOnce(new Error("Loader broke"));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Loader broke");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Something went wrong. Please try again.",
+    );
   });
 });

@@ -1,5 +1,6 @@
 import { Check, Loader2 } from "lucide-react";
 
+import { useT, type MessageKey } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 import type { Actor, MilestoneState, MilestoneStatus } from "../milestones";
@@ -38,16 +39,17 @@ function Dot({ status, n }: { status: MilestoneStatus; n: number }) {
   );
 }
 
-const STATUS_TEXT: Record<MilestoneStatus, string> = {
-  done: "done",
-  running: "in progress",
-  wait: "waiting for you",
-  warn: "needs attention",
-  skip: "skipped",
-  idle: "not started",
+const STATUS_TEXT: Record<MilestoneStatus, MessageKey> = {
+  done: "timeline.status.done",
+  running: "timeline.status.running",
+  wait: "timeline.status.wait",
+  warn: "timeline.status.warn",
+  skip: "timeline.status.skip",
+  idle: "timeline.status.idle",
 };
 
 export function Timeline({ milestones }: { milestones: MilestoneState[] }) {
+  const { t } = useT();
   return (
     <ol className="m-0 list-none p-0">
       {milestones.map((m, i) => (
@@ -71,7 +73,7 @@ export function Timeline({ milestones }: { milestones: MilestoneState[] }) {
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <b className="text-sm">
                 {m.label}
-                <span className="sr-only">, {STATUS_TEXT[m.status]}</span>
+                <span className="sr-only">, {t(STATUS_TEXT[m.status])}</span>
               </b>
               <span
                 className={cn(

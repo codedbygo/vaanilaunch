@@ -1,3 +1,5 @@
+import { useT } from "@/lib/i18n";
+
 import { useStores } from "../hooks";
 
 const safeHref = (u: string) => (/^https?:\/\//.test(u) || u.startsWith("/") ? u : "#");
@@ -6,12 +8,11 @@ const safeHref = (u: string) => (/^https?:\/\//.test(u) || u.startsWith("/") ? u
 // it is a showcase, not something the visitor needs.
 export function Showcase() {
   const q = useStores();
+  const { t } = useT();
   if (!q.data?.length) return null;
   return (
     <section id="stores" className="mx-auto max-w-6xl px-4 pt-16 sm:px-12 sm:pt-24">
-      <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
-        Stores launched with VaaniLaunch
-      </h2>
+      <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">{t("showcase.title")}</h2>
       <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {q.data.map((s) => (
           <a

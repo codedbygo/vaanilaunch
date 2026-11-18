@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import type { ManageCreds } from "@/features/agent/schemas";
+import { useT } from "@/lib/i18n";
 
 import { useRotateKey } from "../hooks";
 import type { Dashboard } from "../schemas";
@@ -10,29 +11,25 @@ import type { Dashboard } from "../schemas";
 export function OwnerSettings({ creds, dash }: { creds: ManageCreds; dash: Dashboard }) {
   const rotate = useRotateKey(creds);
   const [confirming, setConfirming] = useState(false);
+  const { t } = useT();
 
   return (
     <div className="grid gap-2 rounded-xl border border-dashed p-3 text-sm">
       <p>
-        <b>Order emails: </b>
+        <b>{t("owner.emails")} </b>
         {dash.owner_email ? (
           dash.owner_email_verified ? (
-            <span>{dash.owner_email} (confirmed)</span>
+            <span>{t("owner.confirmed", { email: dash.owner_email })}</span>
           ) : (
-            <span>
-              {dash.owner_email} (waiting for you to click the link we emailed; until then orders go
-              to the VaaniLaunch inbox)
-            </span>
+            <span>{t("owner.unconfirmed", { email: dash.owner_email })}</span>
           )
         ) : (
-          <span className="text-muted-foreground">
-            not set. Tell the agent your email to get orders by mail.
-          </span>
+          <span className="text-muted-foreground">{t("owner.notSet")}</span>
         )}
       </p>
       {confirming ? (
         <div className="flex flex-wrap items-center gap-2">
-          <span>Your old link will stop working. Continue?</span>
+          <span>{t("owner.resetConfirm")}</span>
           <Button
             size="sm"
             variant="destructive"
@@ -45,7 +42,7 @@ export function OwnerSettings({ creds, dash }: { creds: ManageCreds; dash: Dashb
               });
             }}
           >
-            Yes, reset it
+            {t("owner.resetYes")}
           </Button>
           <Button
             size="sm"
@@ -54,7 +51,7 @@ export function OwnerSettings({ creds, dash }: { creds: ManageCreds; dash: Dashb
               setConfirming(false);
             }}
           >
-            Cancel
+            {t("owner.cancel")}
           </Button>
         </div>
       ) : (
@@ -66,7 +63,7 @@ export function OwnerSettings({ creds, dash }: { creds: ManageCreds; dash: Dashb
             setConfirming(true);
           }}
         >
-          Reset my private link
+          {t("owner.reset")}
         </Button>
       )}
     </div>

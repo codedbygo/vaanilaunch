@@ -5,12 +5,12 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useManageStore } from "@/app/stores/manage-store";
-import { server } from "@/test/msw";
+import { server, sse } from "@/test/msw";
 import { createTestQueryClient } from "@/test/render";
 
 import { streamAgent, uploadPhoto } from "./api";
 import { useClock } from "./components/useClock";
-import { useLaunchSession } from "./useLaunchSession";
+import { STALL_MS, useLaunchSession } from "./useLaunchSession";
 import { useSpeech } from "./useSpeech";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -113,7 +113,9 @@ describe("useLaunchSession", () => {
     // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- the non-Error case is the point
     vi.stubGlobal("createImageBitmap", () => Promise.reject("not an image"));
     await act(() => result.current.addPhotos([new File(["x"], "x.jpg")]));
-    expect(result.current.state.messages.at(-1)?.text).toBe("⚠️ Photo upload failed: not an image");
+    expect(result.current.state.messages.at(-1)?.text).toBe(
+      "⚠️ Photo upload failed: This photo could not be used. Try another photo.",
+    );
   });
 });
 
@@ -182,6 +184,78 @@ describe("useClock", () => {
       vi.advanceTimersByTime(3_000);
     });
     expect(result.current).toBe(4_000);
+    vi.useRealTimers();
+  });
+});
+
+describe("useLaunchSession: retry and stuck streams", () => {
+  beforeEach(() => {
+    useManageStore.getState().clear();
+  });
+
+  it("offers a retry after an agent error and resends the same message", async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      http.post("*/api/agent", async ({ request }) => {
+        bodies.push(await request.json());
+        return bodies.length === 1
+          ? sse([{ type: "error", data: "model unavailable" }])
+          : sse([{ type: "message", data: "All good" }]);
+      }),
+    );
+    const { result } = renderHook(() => useLaunchSession(), { wrapper });
+    await act(() => result.current.retry()); // nothing failed yet: no request
+    expect(bodies).toHaveLength(0);
+    await act(() => result.current.send("I sell sarees"));
+    expect(result.current.failed).toBe(true);
+    await act(() => result.current.retry());
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toMatchObject({ text: expect.stringContaining("I sell sarees") as unknown });
+    expect(result.current.failed).toBe(false);
+    expect(result.current.state.messages.at(-1)?.text).toBe("All good");
+  });
+
+  it.each([
+    ["before any event", false],
+    ["after an event", true],
+  ])("stops a stream that goes silent %s and says so", async (_, firstEvent) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    server.use(
+      http.post("*/api/agent", ({ request }) => {
+        const stream = new ReadableStream({
+          start(c) {
+            if (firstEvent)
+              c.enqueue(new TextEncoder().encode('data: {"type":"message","data":"Working"}\n\n'));
+            request.signal.addEventListener("abort", () => {
+              c.error(new DOMException("aborted", "AbortError"));
+            });
+          },
+        });
+        return new HttpResponse(stream, { headers: { "Content-Type": "text/event-stream" } });
+      }),
+    );
+    const { result } = renderHook(() => useLaunchSession(), { wrapper });
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = result.current.send("hello");
+    });
+    await waitFor(() => {
+      expect(result.current.state.busy).toBe(true);
+    });
+    if (firstEvent) {
+      await waitFor(() => {
+        expect(result.current.state.messages.at(-1)?.text).toBe("Working");
+      });
+    }
+    await act(async () => {
+      vi.advanceTimersByTime(STALL_MS + 10);
+      await pending;
+    });
+    expect(result.current.state.busy).toBe(false);
+    expect(result.current.failed).toBe(true);
+    expect(result.current.state.messages.at(-1)?.text).toBe(
+      "⚠️ The agent took too long to answer. Tap Try again.",
+    );
     vi.useRealTimers();
   });
 });

@@ -1,16 +1,7 @@
 import { type ErrorComponentProps, Link, useRouter } from "@tanstack/react-router";
 
-import { ApiError } from "@/lib/api";
-
-function describe(error: unknown): string {
-  if (error instanceof ApiError) {
-    return error.message;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "Unexpected error";
-}
+import { errorKey } from "@/lib/error-message";
+import { useT } from "@/lib/i18n";
 
 /**
  * RouteError is the router's errorComponent: a loader or a route component
@@ -19,13 +10,14 @@ function describe(error: unknown): string {
  */
 export function RouteError({ error, reset }: ErrorComponentProps) {
   const router = useRouter();
+  const { t } = useT();
 
   return (
     <section role="alert" aria-labelledby="route-error-heading">
       <h1 id="route-error-heading" className="text-2xl font-semibold">
-        This page could not load
+        {t("page.loadFailed")}
       </h1>
-      <p className="mt-2 text-muted-foreground">{describe(error)}</p>
+      <p className="mt-2 text-muted-foreground">{t(errorKey(error))}</p>
       <div className="mt-4 flex gap-3">
         <button
           type="button"
@@ -35,10 +27,10 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
           }}
           className="inline-flex h-9 items-center rounded-md bg-primary px-4 font-medium text-primary-foreground hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
-          Try again
+          {t("page.retry")}
         </button>
         <Link to="/" className="inline-flex h-9 items-center underline">
-          Back to the start
+          {t("page.backHome")}
         </Link>
       </div>
     </section>

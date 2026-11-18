@@ -2,6 +2,8 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
 
+import { useLocaleStore } from "@/lib/i18n";
+
 import { server } from "./msw";
 
 // jsdom has no layout; the router's scroll restoration calls this on navigation.
@@ -49,6 +51,9 @@ beforeAll(() => {
 
 afterEach(() => {
   cleanup();
+  // The language choice is app-wide state; one test switching to Telugu must not leak.
+  useLocaleStore.setState({ locale: "en-IN" });
+  localStorage.clear();
   server.resetHandlers();
   vi.unstubAllGlobals();
 });

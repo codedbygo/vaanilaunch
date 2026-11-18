@@ -1,4 +1,5 @@
 """Edge cases and failure paths, so every line and branch of the backend is exercised."""
+import re
 import asyncio
 import hashlib
 import json
@@ -793,3 +794,165 @@ def test_json_logs_carry_request_id_and_errors(capsys):
     assert lines[0]["request_id"] == "req-12345678" and lines[0]["message"] == "hello"
     assert "ValueError: boom" in lines[1]["error"]
     observability.setup(json_logs=False)
+
+
+# ---------- Owner emails in the owner's language ----------
+def test_owner_lang_reads_the_first_content_language():
+    from app import mail_text
+    assert mail_text.owner_lang({}) == "en"
+    assert mail_text.owner_lang({"content": [{"lang_code": "te-IN"}, {"lang_code": "en"}]}) == "te"
+    assert mail_text.owner_lang({"content": [{"lang_code": "fr"}]}) == "en"
+    assert mail_text.owner_lang({"content": ["stray", {"lang_code": "hi"}]}) == "en"
+    assert mail_text.owner_lang({"content": "not a list"}) == "en"
+
+
+def test_order_mail_in_owner_language_with_english_and_customer_text_once():
+    from app import mail_text
+    site = {"business_name": "Lakshmi Tiffins", "content": [{"lang_code": "te"}]}
+    subject, body = mail_text.order_mail(site, "LT-1A2B3C", "  • Idli × 2 = ₹160", 160.0,
+                                         "9000000000", "Ravi", "call http://evil first")
+    assert subject == "🛒 కొత్త ఆర్డర్ LT-1A2B3C – ₹160"
+    assert body.startswith("Lakshmi Tiffins కి కొత్త ఆర్డర్ LT-1A2B3C")
+    assert "— English —" in body and "New order LT-1A2B3C for Lakshmi Tiffins" in body
+    assert "'Order LT-1A2B3C'" in body  # the UPI note the customer typed is never translated
+    # The customer's words appear once, at the very end, after the warning in both languages.
+    assert body.count("http://evil") == 1
+    evil = body.index("http://evil")
+    assert body.index("ఇది కస్టమర్ రాసింది") < evil and body.index("Written by the customer") < evil
+    assert "పేరు / Name: Ravi" in body and "నోట్ / Note: call http://evil first" in body
+
+
+def test_order_mail_in_english_has_one_section_and_a_dash_for_no_note():
+    from app import mail_text
+    subject, body = mail_text.order_mail({"business_name": "Cakes", "content": [{"lang_code": "en"}]},
+                                         "CA-000001", "  • Cake × 1 = ₹500", 500.0, "9", "Asha", "")
+    assert subject == "🛒 New order CA-000001 – ₹500"
+    assert "— English —" not in body
+    assert "Name: Asha\nNote: -\n" in body
+
+
+def test_confirm_mail_follows_the_owner_language():
+    from app import mail_text
+    subject, body = mail_text.confirm_mail({"content": [{"lang_code": "hi"}]}, "shop", "https://x/l")
+    assert subject == "अपना VaaniLaunch ऑर्डर ईमेल पक्का करें"
+    assert body.count("https://x/l") == 2 and "— English —" in body
+    subject, body = mail_text.confirm_mail({}, "shop", "https://x/l")
+    assert subject == "Confirm your VaaniLaunch order email" and body.count("https://x/l") == 1
+
+
+def test_every_email_language_has_every_text():
+    from app import mail_text
+    keys = set(mail_text._T["en"])
+    for lang, texts in mail_text._T.items():
+        assert set(texts) == keys, lang
+        for k, v in texts.items():
+            assert sorted(re.findall(r"\{(\w+)\}", v)) == sorted(re.findall(r"\{(\w+)\}", mail_text._T["en"][k])), (lang, k)
+
+
+# ---------- Undo, styles, honest SEO and the launch checklist ----------
+def test_undo_restores_the_store_before_the_last_edit_and_only_once():
+    import asyncio
+    from app import agent, db
+    db.save_draft("undo-shop", {"business_name": "Asha Cakes", "tagline": "Fresh cakes", "owner_email": "a@b.in",
+                                "theme": {"primary_color": "#aa0000"}, "content": [], "contact": {}})
+    s = agent.Session()
+    s.owned.add("undo-shop")
+    s.approved.add("undo-shop")
+    nothing = asyncio.run(agent._run_tool("undo_last_change", {"slug": "undo-shop"}, s))
+    assert nothing == {"undone": False, "note": "There is no earlier version to go back to."}
+
+    asyncio.run(agent._run_tool("update_site", {"slug": "undo-shop", "set": {
+        "theme": {"primary_color": "#aa0000", "background": "#fff8e7", "style": "premium"},
+        "owner_email": "new@b.in"}}, s))
+    assert db.get_site("undo-shop")["theme"]["style"] == "premium"
+    assert "_prev" not in asyncio.run(agent._run_tool("get_site", {"slug": "undo-shop"}, s))
+
+    s.approved.add("undo-shop")
+    out = asyncio.run(agent._run_tool("undo_last_change", {"slug": "undo-shop"}, s))
+    site = db.get_site("undo-shop")
+    assert out["undone"] is True and site["theme"] == {"primary_color": "#aa0000"}
+    assert site["owner_email"] == "a@b.in" and site["owner_email_verified"] is False
+    assert site["status"] == "draft" and "undo-shop" not in s.approved  # a changed draft needs approval again
+    assert asyncio.run(agent._run_tool("undo_last_change", {"slug": "undo-shop"}, s))["undone"] is False
+
+
+def test_undo_on_a_live_store_keeps_it_live_and_keeps_a_confirmed_email():
+    import asyncio
+    from app import agent, db
+    db.save_draft("undo-live", {"business_name": "Live", "tagline": "t", "owner_email": "o@b.in", "content": [], "contact": {}})
+    db.set_email_verified("undo-live", "o@b.in")
+    db.set_live("undo-live")
+    s = agent.Session()
+    s.owned.add("undo-live")
+    asyncio.run(agent._run_tool("update_site", {"slug": "undo-live", "notice": "Closed today"}, s))
+    asyncio.run(agent._run_tool("undo_last_change", {"slug": "undo-live"}, s))
+    site = db.get_site("undo-live")
+    assert site["status"] == "live" and not site.get("notice") and site["owner_email_verified"] is True
+
+
+def test_store_style_follows_category_and_can_be_chosen():
+    from app.site_render import render_site, style_of
+    assert style_of({"category": "salon"}) == "premium"
+    assert style_of({"category": "coaching"}) == "modern"
+    assert style_of({"category": "unknown"}) == "classic"
+    assert style_of({"category": "salon", "theme": {"style": "playful"}}) == "playful"
+    assert style_of({"theme": {"style": "neon"}}) == "classic"
+    page = render_site({"business_name": "Glow", "category": "salon", "theme": {"background": "#fff8e7"}})
+    assert 'class="st-premium"' in page and "--bg:#fff8e7" in page
+    assert "--bg:#fafafa" in render_site({"business_name": "Tutor", "category": "coaching"})
+    assert "--bg:#fffaf5" in render_site({"business_name": "Food", "theme": {"background": "cream"}})
+
+
+def test_store_shows_only_given_testimonials_and_valid_social_links():
+    from app.site_render import render_site
+    site = {"business_name": "Glow", "contact": {"instagram": "@glow.salon", "facebook": "javascript:alert(1)"},
+            "content": [{"lang_code": "en", "lang_label": "English", "hero_title": "Glow", "hero_subtitle": "s",
+                         "about": "a", "testimonials": [{"name": "Priya", "text": "Lovely <b>work</b>"},
+                                                        {"name": "Empty"}, "stray"]}]}
+    page = render_site(site)
+    assert "What customers say" in page and "Lovely &lt;b&gt;work&lt;/b&gt;" in page and "Empty" not in page
+    assert 'href="https://instagram.com/glow.salon"' in page and "javascript:" not in page
+    plain = render_site({"business_name": "X", "contact": {"facebook": "https://facebook.com/x"}})
+    assert "What customers say" not in plain and 'href="https://facebook.com/x"' in plain
+
+
+def test_store_seo_tags_are_absolute_and_drafts_are_not_indexed():
+    import json as _json
+    import re as _re
+    from app.site_render import render_site
+    site = {"slug": "glow", "business_name": "Glow", "tagline": "Bridal makeup", "category": "salon",
+            "seo": {"title": "Glow Salon Hyderabad", "description": "Bridal makeup in Hyderabad", "keywords": "salon, bridal"},
+            "contact": {"phone": "9000000000", "city": "Hyderabad", "instagram": "glow"},
+            "products": [{"id": "p1", "name": "Bridal", "price": 5000, "image_id": "0123456789abcdef"}]}
+    page = render_site(site, url="https://glow.vaanilaunch.in", media_base="https://vaanilaunch.in")
+    assert "<title>Glow Salon Hyderabad</title>" in page and 'content="salon, bridal"' in page
+    assert '<link rel="canonical" href="https://glow.vaanilaunch.in">' in page
+    assert 'og:image" content="https://vaanilaunch.in/media/0123456789abcdef.jpg"' in page
+    ld = _json.loads(_re.search(r'<script type="application/ld\+json">(.*?)</script>', page).group(1))
+    assert ld["@type"] == "BeautySalon" and ld["telephone"] == "9000000000"
+    assert ld["address"]["addressLocality"] == "Hyderabad" and ld["sameAs"] == ["https://instagram.com/glow"]
+    draft = render_site({**site, "seo": {}}, preview=True, url="https://glow.vaanilaunch.in")
+    assert '<meta name="robots" content="noindex">' in draft and "canonical" not in draft
+    assert "<title>Glow – Bridal makeup</title>" in draft
+    bare = render_site({"business_name": "Solo"})
+    assert "<title>Solo</title>" in bare and "og:image" not in bare and '"@type": "LocalBusiness"' in bare
+
+
+def test_launch_checklist_counts_only_real_fields():
+    from app import main
+    empty = {i["key"]: i["done"] for i in main.launch_checklist({"content": ["stray"]})}
+    assert not any(empty.values()) and len(empty) == 9
+    full = {i["key"]: i["done"] for i in main.launch_checklist({
+        "business_name": "Glow", "tagline": "Bridal makeup", "status": "live",
+        "content": [{"about": "We do bridal makeup"}],
+        "products": [{"id": "p1", "image_id": "0123456789abcdef"}],
+        "contact": {"whatsapp": "9", "hours": "10-7", "address": "Road 1"}})}
+    assert all(full.values())
+
+
+def test_dashboard_returns_the_checklist():
+    from app import db
+    site = db.save_draft("check-shop", {"business_name": "Check", "content": [], "contact": {}})
+    d = api.post("/api/manage", json={"slug": "check-shop", "key": site["edit_key"]}).json()
+    assert {i["key"] for i in d["checklist"]} >= {"name", "published"}
+    assert next(i for i in d["checklist"] if i["key"] == "name")["done"] is True

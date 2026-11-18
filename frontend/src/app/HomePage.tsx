@@ -2,7 +2,13 @@ import { useRef } from "react";
 
 import { Hero } from "@/components/marketing/Hero";
 import { Nav } from "@/components/marketing/Nav";
-import { Footer, HowItWorks, Powered, Trust } from "@/components/marketing/StorySections";
+import {
+  Features,
+  FinalCta,
+  Footer,
+  HowItWorks,
+  Trust,
+} from "@/components/marketing/StorySections";
 import { Studio } from "@/features/agent/components/Studio";
 import { useLaunchSession } from "@/features/agent/useLaunchSession";
 import { ContactForm } from "@/features/contact/components/ContactForm";
@@ -22,9 +28,10 @@ export function HomePage() {
       <Hero onStart={start} />
       <Studio session={session} ref={studioRef} />
       <HowItWorks />
-      <Trust />
-      <Powered />
+      <Features />
       <Showcase />
+      <Trust />
+      <FinalCta onStart={start} />
       <ContactForm />
       <Footer />
     </>

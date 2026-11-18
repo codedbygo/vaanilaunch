@@ -4,17 +4,15 @@ import { useReducer, useRef, useState } from "react";
 import { useManageStore } from "@/app/stores/manage-store";
 import { manageKeys } from "@/features/manage/hooks";
 import { storeKeys } from "@/features/stores/hooks";
+import { ApiError } from "@/lib/api";
+import { errorKey } from "@/lib/error-message";
+import { DEFAULT_LOCALE, translate, useLocaleStore, type MessageKey } from "@/lib/i18n";
 
 import { approveDraft, streamAgent, uploadPhoto } from "./api";
-import { langOf, type LangCode } from "./languages";
+import { langOf } from "./languages";
 import { getPowSolution } from "./pow";
 import { manageCredsSchema, type AgentEvent } from "./schemas";
 import { initialSession, sessionReducer } from "./session";
-
-const WELCOME =
-  "Namaste! 🙏 Tell me about your business: what you sell, where, and your WhatsApp number. Add product photos too. Tap the mic and speak in your language, or type.";
-const WELCOME_BACK =
-  "👋 Welcome back! Tell me what to change: add a product, change a price, set a holiday notice, or ask for your orders.";
 
 export interface PendingPhoto {
   key: string;
@@ -30,7 +28,15 @@ function newSessionId(): string {
   ).join("");
 }
 
-const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** No event from the agent for this long means the stream is stuck: stop it and offer a retry. */
+export const STALL_MS = 120_000;
+
+interface Turn {
+  text: string;
+  images: { id: string; url: string }[];
+}
+
+const welcome = (key: MessageKey) => initialSession(translate(DEFAULT_LOCALE, key), key);
 
 export function useLaunchSession() {
   const creds = useManageStore((s) => s.creds);
@@ -38,15 +44,21 @@ export function useLaunchSession() {
   const qc = useQueryClient();
   const [sessionId] = useState(newSessionId);
   const [state, dispatch] = useReducer(sessionReducer, creds, (c) =>
-    initialSession(c ? WELCOME_BACK : WELCOME),
+    welcome(c ? "studio.welcomeBack" : "studio.welcome"),
   );
-  const [lang, setLang] = useState<LangCode>("te-IN");
+  // One language for the page, the mic and the agent: the owner's choice, shared app-wide.
+  const lang = useLocaleStore((s) => s.locale);
+  const say = (key: MessageKey, vars?: Record<string, string>) =>
+    translate(useLocaleStore.getState().locale, key, vars);
   const [photos, setPhotos] = useState<PendingPhoto[]>([]);
+  // The last message that failed (error, timeout, lost connection), kept so one tap resends it.
+  const [failed, setFailed] = useState<Turn | null>(null);
 
   // The server knows this session once a first message got through; only then is no puzzle needed.
   const known = useRef(false);
 
-  const onEvent = (event: AgentEvent) => {
+  const onEvent = (event: AgentEvent, turn: Turn) => {
+    if (event.type === "error") setFailed(turn);
     let preview: string | undefined;
     if (event.type === "step" && event.data.status === "done") {
       const m = manageCredsSchema.safeParse(event.data.result?._manage);
@@ -59,39 +71,59 @@ export function useLaunchSession() {
 
   const send = async (raw: string) => {
     const ready = photos.filter((p): p is PendingPhoto & { id: string } => p.id !== undefined);
-    const text = raw.trim() || (ready.length ? "📷 Here are my product photos." : "");
+    const text = raw.trim() || (ready.length ? say("studio.photosMessage") : "");
     if (!text || state.busy) return;
     if (ready.length !== photos.length) {
-      dispatch({ type: "note", text: "⏳ Photos are still uploading. Send again in a moment." });
+      dispatch({ type: "note", text: say("studio.photosUploading") });
       return;
     }
     setPhotos([]);
+    await deliver({ text, images: ready.map((p) => ({ id: p.id, url: p.url })) });
+  };
+
+  const deliver = async (turn: Turn) => {
+    const { text } = turn;
+    setFailed(null);
     dispatch({
       type: "send",
       text,
-      images: ready.map((p) => p.url),
+      images: turn.images.map((p) => p.url),
       now: Date.now(),
       startTimer: creds === null,
     });
     const current = useManageStore.getState().creds;
+    const stop = new AbortController();
+    let timer = setTimeout(() => {
+      stop.abort();
+    }, STALL_MS);
     try {
       // A brand-new visitor proves it's a browser, not a script (a manage link is proof enough).
       const pow = known.current || current ? undefined : await getPowSolution();
       await streamAgent(
         {
           sessionId,
-          images: ready.map((p) => p.id),
+          images: turn.images.map((p) => p.id),
           text: `${text}\n\n[Preferred language: ${langOf(lang).english}]`,
           manageSlug: current?.slug,
           manageKey: current?.key,
           pow,
         },
-        onEvent,
+        (event) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            stop.abort();
+          }, STALL_MS);
+          onEvent(event, turn);
+        },
+        stop.signal,
       );
       known.current = true;
     } catch (e) {
-      dispatch({ type: "note", text: `⚠️ ${errorText(e)}` });
+      setFailed(turn);
+      const why = stop.signal.aborted ? "error.timeout" : errorKey(e);
+      dispatch({ type: "note", text: `⚠️ ${say(why)}` });
     } finally {
+      clearTimeout(timer);
       dispatch({ type: "turn-end" });
       void qc.invalidateQueries({ queryKey: manageKeys.all });
       void qc.invalidateQueries({ queryKey: storeKeys.all });
@@ -107,7 +139,9 @@ export function useLaunchSession() {
         setPhotos((p) => p.map((x) => (x.key === key ? { ...x, id: up.id, url: up.url } : x)));
       } catch (e) {
         setPhotos((p) => p.filter((x) => x.key !== key));
-        dispatch({ type: "note", text: `⚠️ Photo upload failed: ${errorText(e)}` });
+        // A server answer maps by status; anything local (not an image, resize failed) is the photo.
+        const why = e instanceof ApiError ? errorKey(e) : "error.badPhoto";
+        dispatch({ type: "note", text: say("studio.photoFailed", { error: say(why) }) });
       }
     }
   };
@@ -123,16 +157,19 @@ export function useLaunchSession() {
     try {
       await approveDraft(sessionId, target, useManageStore.getState().creds?.key);
       dispatch({ type: "approved" });
-      await send("✅ I approve the preview. Please publish my store.");
+      await send(say("studio.approveMessage"));
     } catch (e) {
-      dispatch({ type: "note", text: `⚠️ ${errorText(e)}` });
+      dispatch({ type: "note", text: `⚠️ ${say(errorKey(e))}` });
     }
   };
 
   return {
     state,
     lang,
-    setLang,
+    failed: failed !== null,
+    retry: async () => {
+      if (failed && !state.busy) await deliver(failed);
+    },
     photos,
     send,
     addPhotos,

@@ -34,6 +34,7 @@ async function errorDetail(res: Response): Promise<string> {
 export async function streamAgent(
   body: AgentRequest,
   onEvent: (event: AgentEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   let res: Response;
   try {
@@ -41,6 +42,7 @@ export async function streamAgent(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: signal ?? null,
     });
   } catch (cause) {
     throw new ApiError("network", 0, "Could not reach the server. Check your connection.", cause);

@@ -3,19 +3,22 @@ import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
-import { LANGS, langOf, speechError, type LangCode } from "../languages";
+import { langOf, speechError } from "../languages";
 import type { LaunchSession } from "../useLaunchSession";
 import { useSpeech } from "../useSpeech";
 
-const isLang = (v: string): v is LangCode => LANGS.some((l) => l.code === v);
+// Heights of the listening waveform bars (px).
+const WAVE = [10, 20, 30, 18, 26, 14, 28, 22, 12, 24, 16];
 
 export function Composer({ session }: { session: LaunchSession }) {
-  const { lang, setLang, photos, send, addPhotos, removePhoto, note, state } = session;
+  const { lang, photos, send, addPhotos, removePhoto, note, state } = session;
+  const { t, locale } = useT();
   const [input, setInput] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const boxRef = useRef<HTMLTextAreaElement>(null);
   const native = langOf(lang).native;
 
   const submit = (text: string) => {
@@ -25,11 +28,13 @@ export function Composer({ session }: { session: LaunchSession }) {
   const speech = useSpeech({
     lang,
     onText: setInput,
-    onEnd: (t) => {
-      if (t.trim()) submit(t);
+    // What was heard stays in the box: the owner checks it, fixes any word, then taps Send.
+    onEnd: (heard) => {
+      setInput(heard);
+      boxRef.current?.focus();
     },
     onError: (code) => {
-      note(`🎤 ${speechError(code)}`);
+      note(`🎤 ${speechError(code, locale)}`);
     },
   });
   const canSend = !state.busy && (input.trim() !== "" || photos.length > 0);
@@ -37,7 +42,7 @@ export function Composer({ session }: { session: LaunchSession }) {
   return (
     <div className="mt-3 grid grid-cols-1 gap-3 border-t pt-3">
       {photos.length > 0 && (
-        <ul className="flex flex-wrap gap-2" aria-label="Photos to send">
+        <ul className="flex flex-wrap gap-2" aria-label={t("composer.photos")}>
           {photos.map((p) => (
             <li key={p.key} className="relative size-15">
               <img
@@ -51,14 +56,14 @@ export function Composer({ session }: { session: LaunchSession }) {
                   onClick={() => {
                     removePhoto(p.key);
                   }}
-                  aria-label="Remove photo"
+                  aria-label={t("composer.removePhoto")}
                   className="absolute -top-1.5 -right-1.5 grid size-5.5 place-items-center rounded-full bg-primary text-primary-foreground"
                 >
                   <X className="size-3" aria-hidden="true" />
                 </button>
               ) : (
                 <span role="status" className="sr-only">
-                  Uploading
+                  {t("composer.uploading")}
                 </span>
               )}
             </li>
@@ -66,53 +71,45 @@ export function Composer({ session }: { session: LaunchSession }) {
         </ul>
       )}
 
-      <ToggleGroup
-        type="single"
-        spacing={1.5}
-        value={lang}
-        onValueChange={(v) => {
-          if (isLang(v)) setLang(v);
-        }}
-        aria-label="Speaking language"
-        className="flex w-full justify-start gap-1.5 overflow-x-auto"
-      >
-        {LANGS.map((l) => (
-          <ToggleGroupItem
-            key={l.code}
-            value={l.code}
-            title={l.english}
-            className="flex-none rounded-full border px-3 data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-          >
-            {l.native}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-
-      <div className="flex items-center gap-3.5">
+      {/* The mic is the centrepiece: large, centred, with a waveform while it listens. */}
+      <div className="grid justify-items-center gap-3 py-2 text-center">
         <button
           type="button"
           onClick={speech.toggle}
           disabled={!speech.supported || state.busy}
-          aria-label={speech.listening ? "Stop listening and send" : `Speak in ${native}`}
+          aria-label={
+            speech.listening
+              ? t("composer.stopListening")
+              : t("composer.speakIn", { language: native })
+          }
           className={cn(
-            "grid size-16 flex-none place-items-center rounded-full text-white shadow-brand transition-transform hover:scale-105 disabled:opacity-45",
-            speech.listening ? "animate-ring bg-rose" : "bg-brand",
+            "grid size-20 place-items-center rounded-full text-white shadow-brand transition-transform hover:scale-105 focus-visible:ring-4 focus-visible:ring-ring disabled:opacity-45",
+            speech.listening ? "animate-ring bg-rose" : "bg-saffron",
           )}
         >
-          <Mic className="size-6" aria-hidden="true" />
+          <Mic className="size-8" aria-hidden="true" />
         </button>
-        <div className="grid">
-          <b>
+        {speech.listening && (
+          <div className="flex h-8 items-center gap-1" aria-hidden="true">
+            {WAVE.map((h, i) => (
+              <span
+                key={i}
+                className="wave-bar w-1 rounded-full bg-rose/70"
+                style={{ height: `${String(h)}px`, animationDelay: `${String(i * 80)}ms` }}
+              />
+            ))}
+          </div>
+        )}
+        <div className="grid gap-0.5">
+          <b className="text-base">
             {speech.listening
-              ? "Listening… take your time"
+              ? t("composer.listening")
               : speech.supported
-                ? `Tap and speak in ${native}`
-                : "Voice needs Chrome or Edge"}
+                ? t("composer.tapToSpeak", { language: native })
+                : t("composer.noVoice")}
           </b>
           <span className="text-sm text-muted-foreground">
-            {speech.listening
-              ? "Tap the mic again when you finish, and it sends"
-              : "or type below · up to 6 photos"}
+            {speech.listening ? t("composer.listeningHint") : t("composer.idleHint")}
           </span>
         </div>
       </div>
@@ -125,7 +122,7 @@ export function Composer({ session }: { session: LaunchSession }) {
           className="size-11.5 flex-none rounded-xl"
           onClick={() => fileRef.current?.click()}
           disabled={state.busy || photos.length >= 6}
-          aria-label="Add product photos"
+          aria-label={t("composer.addPhotos")}
         >
           <Camera aria-hidden="true" />
         </Button>
@@ -141,6 +138,7 @@ export function Composer({ session }: { session: LaunchSession }) {
           }}
         />
         <Textarea
+          ref={boxRef}
           value={input}
           onChange={(e) => {
             setInput(e.target.value);
@@ -152,8 +150,8 @@ export function Composer({ session }: { session: LaunchSession }) {
             }
           }}
           rows={1}
-          placeholder="Type your message…"
-          aria-label="Message"
+          placeholder={t("composer.placeholder")}
+          aria-label={t("composer.message")}
           className="h-11.5 min-h-0 flex-1 resize-none rounded-xl"
         />
         <Button
@@ -164,7 +162,7 @@ export function Composer({ session }: { session: LaunchSession }) {
           }}
           disabled={!canSend}
         >
-          Send
+          {t("composer.send")}
         </Button>
       </div>
     </div>

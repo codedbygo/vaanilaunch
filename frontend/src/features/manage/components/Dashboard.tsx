@@ -1,33 +1,66 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { qrUrl } from "@/features/agent/api";
 import type { ManageCreds } from "@/features/agent/schemas";
+import { errorKey } from "@/lib/error-message";
 import { inr } from "@/lib/format";
+import { useT, type MessageKey } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 import { useDashboard, useSetOrderStatus } from "../hooks";
-import type { Order, OrderStatus } from "../schemas";
+import type { Dashboard as DashboardData, Order, OrderStatus } from "../schemas";
 import { OwnerSettings } from "./OwnerSettings";
 
-const STATUS: Record<OrderStatus, { label: string; className: string }> = {
-  pending_payment: { label: "Payment pending", className: "bg-warning-soft text-warning" },
-  paid: { label: "Paid", className: "bg-success-soft text-success" },
-  delivered: { label: "Delivered", className: "bg-godaddy-soft text-godaddy" },
-  cancelled: { label: "Cancelled", className: "bg-destructive/10 text-destructive" },
+const STATUS: Record<OrderStatus, { label: MessageKey; className: string }> = {
+  pending_payment: {
+    label: "order.status.pending_payment",
+    className: "bg-warning-soft text-warning",
+  },
+  paid: { label: "order.status.paid", className: "bg-success-soft text-success" },
+  delivered: { label: "order.status.delivered", className: "bg-godaddy-soft text-godaddy" },
+  cancelled: { label: "order.status.cancelled", className: "bg-destructive/10 text-destructive" },
 };
+
+/** Launch readiness from the store's real fields: the score is done / total, nothing estimated. */
+function Checklist({ items }: { items: NonNullable<DashboardData["checklist"]> }) {
+  const { t } = useT();
+  const done = items.filter((i) => i.done).length;
+  const pct = Math.round((done / items.length) * 100);
+  return (
+    <section aria-label={t("checklist.title")} className="grid gap-2 rounded-xl border p-3">
+      <div className="flex items-center justify-between text-sm font-bold">
+        {t("checklist.title")}
+        <span className={pct === 100 ? "text-success" : "text-warning"}>{pct}%</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+        <div className="h-full rounded-full bg-success" style={{ width: `${String(pct)}%` }} />
+      </div>
+      <ul className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+        {items.map((i) => (
+          <li key={i.key} className={i.done ? "" : "text-muted-foreground"}>
+            {i.done ? "✓" : "○"} {t(`checklist.${i.key}`)}
+          </li>
+        ))}
+      </ul>
+      {pct < 100 && <p className="text-xs text-muted-foreground">{t("checklist.hint")}</p>}
+    </section>
+  );
+}
 
 function OrderRow({ order, creds }: { order: Order; creds: ManageCreds }) {
   const update = useSetOrderStatus(creds);
+  const { t } = useT();
   const s = STATUS[order.status];
   return (
     <li className="grid justify-items-start gap-1 rounded-xl border px-3 py-2.5">
       <div className="flex w-full items-center gap-2">
         <b>{order.ref}</b>
-        <Badge className={cn("border-0", s.className)}>{s.label}</Badge>
+        <Badge className={cn("border-0", s.className)}>{t(s.label)}</Badge>
         <b className="ml-auto">{inr(order.total)}</b>
       </div>
       <small className="text-sm">
-        {order.items.map((l) => `${l.name ?? "Item"} × ${String(l.qty)}`).join(", ")}
+        {order.items.map((l) => `${l.name ?? t("dash.item")} × ${String(l.qty)}`).join(", ")}
       </small>
       <small className="text-sm text-muted-foreground">
         {order.customer.name} · {order.customer.phone}
@@ -42,7 +75,7 @@ function OrderRow({ order, creds }: { order: Order; creds: ManageCreds }) {
             update.mutate({ ref: order.ref, status: "paid" });
           }}
         >
-          Money received ✓
+          {t("dash.moneyReceived")}
         </Button>
       )}
       {order.status === "paid" && (
@@ -55,7 +88,7 @@ function OrderRow({ order, creds }: { order: Order; creds: ManageCreds }) {
             update.mutate({ ref: order.ref, status: "delivered" });
           }}
         >
-          Mark delivered
+          {t("dash.markDelivered")}
         </Button>
       )}
     </li>
@@ -64,10 +97,11 @@ function OrderRow({ order, creds }: { order: Order; creds: ManageCreds }) {
 
 export function Dashboard({ creds }: { creds: ManageCreds }) {
   const q = useDashboard(creds, true);
+  const { t } = useT();
 
   if (q.isPending) {
     return (
-      <div role="status" aria-label="Loading your store" className="grid gap-3">
+      <div role="status" aria-label={t("dash.loading")} className="grid gap-3">
         <Skeleton className="h-6 w-1/2" />
         <Skeleton className="h-20" />
         <Skeleton className="h-24" />
@@ -78,10 +112,10 @@ export function Dashboard({ creds }: { creds: ManageCreds }) {
     return (
       <div role="alert" className="grid justify-items-start gap-2">
         <p className="text-sm text-muted-foreground">
-          Could not load your store: {q.error.message}
+          {t("dash.loadFailed", { error: t(errorKey(q.error)) })}
         </p>
         <Button size="sm" variant="outline" onClick={() => void q.refetch()}>
-          Try again
+          {t("dash.retry")}
         </Button>
       </div>
     );
@@ -103,7 +137,7 @@ export function Dashboard({ creds }: { creds: ManageCreds }) {
                 : "bg-secondary text-muted-foreground",
             )}
           >
-            {d.status === "live" ? "● Live" : "Draft"}
+            {d.status === "live" ? t("dash.live") : t("dash.draft")}
           </Badge>
         </div>
         <a
@@ -114,12 +148,22 @@ export function Dashboard({ creds }: { creds: ManageCreds }) {
         >
           {d.url}
         </a>
+        {d.status === "live" && (
+          <a
+            className="text-sm font-semibold text-accent-foreground underline"
+            href={qrUrl(d.url)}
+            download="store-qr.svg"
+          >
+            ⬇ {t("launch.downloadQr")}
+          </a>
+        )}
       </div>
+      {d.checklist && d.checklist.length > 0 && <Checklist items={d.checklist} />}
       <dl className="grid grid-cols-3 gap-2">
         {[
-          [String(d.orders.length), "orders"],
-          [String(pending), "awaiting payment"],
-          [inr(value), "order value"],
+          [String(d.orders.length), t("dash.orders")],
+          [String(pending), t("dash.awaiting")],
+          [inr(value), t("dash.value")],
         ].map(([v, label]) => (
           <div key={label} className="rounded-xl bg-secondary p-2.5">
             <dd className="text-lg font-bold">{v}</dd>
@@ -128,11 +172,9 @@ export function Dashboard({ creds }: { creds: ManageCreds }) {
         ))}
       </dl>
       <OwnerSettings creds={creds} dash={d} />
-      <h3 className="text-sm font-bold">Orders</h3>
+      <h3 className="text-sm font-bold">{t("dash.ordersTitle")}</h3>
       {d.orders.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No orders yet. Share your store link on WhatsApp to get the first one.
-        </p>
+        <p className="text-sm text-muted-foreground">{t("dash.noOrders")}</p>
       ) : (
         <ul className="grid max-h-96 gap-2 overflow-auto">
           {d.orders.map((o) => (

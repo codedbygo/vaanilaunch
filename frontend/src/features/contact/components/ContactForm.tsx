@@ -7,14 +7,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/api";
+import { useT, type MessageKey } from "@/lib/i18n";
 
-import { contactFormSchema, contactResultSchema, type ContactForm as Values } from "../schemas";
+import {
+  asKey,
+  contactFormSchema,
+  contactResultSchema,
+  type ContactForm as Values,
+} from "../schemas";
 
-type Errors = Partial<Record<keyof Values, string>>;
+type Errors = Partial<Record<keyof Values, MessageKey>>;
 
-// Messages go to the platform's Titan mailbox through POST /api/contact.
+// Messages go to the platform's mailbox through POST /api/contact.
 export function ContactForm() {
   const [errors, setErrors] = useState<Errors>({});
+  const { t } = useT();
   const send = useMutation({
     mutationFn: (v: Values) =>
       apiFetch("/api/contact", contactResultSchema, { method: "POST", body: JSON.stringify(v) }),
@@ -26,10 +33,13 @@ export function ContactForm() {
     const parsed = contactFormSchema.safeParse(Object.fromEntries(new FormData(form)));
     if (!parsed.success) {
       const { fieldErrors } = z.flattenError(parsed.error);
+      const name = asKey(fieldErrors.name?.[0]);
+      const email = asKey(fieldErrors.email?.[0]);
+      const message = asKey(fieldErrors.message?.[0]);
       setErrors({
-        ...(fieldErrors.name?.[0] ? { name: fieldErrors.name[0] } : {}),
-        ...(fieldErrors.email?.[0] ? { email: fieldErrors.email[0] } : {}),
-        ...(fieldErrors.message?.[0] ? { message: fieldErrors.message[0] } : {}),
+        ...(name ? { name } : {}),
+        ...(email ? { email } : {}),
+        ...(message ? { message } : {}),
       });
       return;
     }
@@ -41,13 +51,13 @@ export function ContactForm() {
     });
   };
 
-  const field = (name: keyof Values, label: string, control: ReactNode) => (
+  const field = (name: keyof Values, label: MessageKey, control: ReactNode) => (
     <div className="grid gap-1.5">
-      <Label htmlFor={`contact-${name}`}>{label}</Label>
+      <Label htmlFor={`contact-${name}`}>{t(label)}</Label>
       {control}
       {errors[name] && (
         <p id={`contact-${name}-error`} className="text-sm text-destructive">
-          {errors[name]}
+          {t(errors[name])}
         </p>
       )}
     </div>
@@ -60,11 +70,8 @@ export function ContactForm() {
       className="mx-auto grid max-w-6xl items-start gap-8 px-4 pt-16 sm:px-12 sm:pt-24 md:grid-cols-2"
     >
       <div>
-        <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">Talk to us</h2>
-        <p className="mt-2.5 max-w-xl text-lg text-muted-foreground">
-          Questions, partnerships, or want VaaniLaunch for your self-help group? Messages go
-          straight to our Titan mailbox.
-        </p>
+        <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">{t("contact.title")}</h2>
+        <p className="mt-2.5 max-w-xl text-lg text-muted-foreground">{t("contact.sub")}</p>
       </div>
       <form
         onSubmit={onSubmit}
@@ -73,7 +80,7 @@ export function ContactForm() {
       >
         {field(
           "name",
-          "Your name",
+          "contact.name",
           <Input
             id="contact-name"
             name="name"
@@ -84,7 +91,7 @@ export function ContactForm() {
         )}
         {field(
           "email",
-          "Email",
+          "contact.email",
           <Input
             id="contact-email"
             name="email"
@@ -95,7 +102,7 @@ export function ContactForm() {
         )}
         {field(
           "message",
-          "Message",
+          "contact.message",
           <Textarea
             id="contact-message"
             name="message"
@@ -110,11 +117,11 @@ export function ContactForm() {
           disabled={send.isPending}
           className="rounded-full bg-brand text-white shadow-brand"
         >
-          {send.isPending ? "Sending…" : "Send message"}
+          {send.isPending ? t("contact.sending") : t("contact.send")}
         </Button>
         <p role="status" className="text-sm text-muted-foreground">
-          {send.isSuccess && "Thanks! We will reply soon."}
-          {send.isError && "Could not send right now. Please try again later."}
+          {send.isSuccess && t("contact.sent")}
+          {send.isError && t("contact.failed")}
         </p>
       </form>
     </section>

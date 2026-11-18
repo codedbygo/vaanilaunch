@@ -6,7 +6,7 @@ mailbox at a stranger.
 """
 from urllib.parse import urlencode
 
-from . import config, notify, security
+from . import config, db, mail_text, notify, security
 
 _sent: set[tuple[str, str]] = set()  # one confirmation mail per store and address per run
 
@@ -20,10 +20,8 @@ async def request_owner_email(slug: str, email: str) -> str:
     """Send the confirmation link once; returns a short status for the agent to relay."""
     if (slug, email.lower()) in _sent:
         return "confirmation email already sent; orders go to the platform inbox until it is confirmed"
-    body = (f"Please confirm that order emails for your VaaniLaunch store '{slug}' should come to this address:\n\n"
-            f"{confirm_link(slug, email)}\n\n"
-            "If you didn't set up this store, ignore this email and nothing will be sent to you.")
-    sent = await notify.send_mail(email, "Confirm your VaaniLaunch order email", body)
+    subject, body = mail_text.confirm_mail(db.get_site(slug) or {}, slug, confirm_link(slug, email))
+    sent = await notify.send_mail(email, subject, body)
     if not sent:
         return "could not send the confirmation email; orders go to the platform inbox"
     _sent.add((slug, email.lower()))

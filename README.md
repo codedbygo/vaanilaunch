@@ -111,6 +111,23 @@ weaker at tool use and Indian languages; use Claude for the demo.
 Fully offline UI testing without any model: `uvicorn --app-dir dev mock_claude:app --port 8765`
 (from `backend/`) and `ANTHROPIC_BASE_URL=http://127.0.0.1:8765`. It plays a scripted launch.
 
+## Languages
+
+The site runs in 9 languages: Telugu, Hindi, Tamil, Kannada, Malayalam, Marathi, Bengali,
+Gujarati and English. One choice drives everything: the page text, the microphone and the
+agent's replies. The first visit follows the phone's language, the picker in the top bar changes
+it, and the choice is saved on the device. Owner emails (new orders, email confirmation) use the
+store's first language, with English below.
+
+- Page text: `frontend/src/lib/i18n/catalogs/<locale>.json`, one file per language, same keys.
+  The English file is the source; keys name the place (`studio.approve`), never the English words.
+- Email text: `backend/app/mail_text.py`.
+- `npm run i18n:check` (part of `npm run check`) fails on a missing key, a missing language file,
+  a `{placeholder}` that differs from English, or code asking for a key that doesn't exist.
+- The 8 non-English languages are machine drafts. `frontend/src/lib/i18n/worklist.json` records
+  that; after a native speaker reviews a language, set `reviewedBy`. Put any key that still needs
+  translating in `needsTranslation`: `npm run i18n:release` fails until the list is empty.
+
 ## Tests
 
 ```bash

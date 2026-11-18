@@ -38,7 +38,8 @@ describe("deriveMilestones", () => {
     ];
     let m = byKey({ ...base, started: true, steps });
     expect(m.domains?.status).toBe("warn");
-    expect(m.domains?.detail).toContain("not configured");
+    // The tool's English error text is for logs; the owner sees a message in her language.
+    expect(m.domains?.detail).toBe("Something went wrong. Please try again.");
 
     steps.push(
       done("check_domains", {
@@ -70,7 +71,7 @@ describe("deriveMilestones", () => {
     );
     m = byKey({ ...base, started: true, steps, live: true });
     expect(m.approve?.status).toBe("done");
-    expect(m.dns?.detail).toBe("Served via wildcard DNS");
+    expect(m.dns?.detail).toBe("Web address ready");
     expect(m.verify?.detail).toBe("Store reachable (local preview, no HTTPS)");
   });
 
@@ -82,7 +83,7 @@ describe("deriveMilestones", () => {
     });
     expect(m.domains?.status).toBe("skip");
     expect(m.build?.status).toBe("running");
-    expect(m.build?.detail).toBe("Building store");
+    expect(m.build?.detail).toBe("Building your store");
     expect(m.dns?.status).toBe("idle");
   });
 
@@ -99,16 +100,18 @@ describe("deriveMilestones", () => {
         done("verify_site", { ok: false }),
       ],
     });
-    expect(m.dns?.detail).toBe("A record x.vaani.in");
+    expect(m.dns?.detail).toBe("Web address ready");
     expect(m.verify?.status).toBe("warn");
   });
 });
 
 describe("verifyLabel", () => {
   it("claims only what was checked", () => {
-    expect(verifyLabel({ ok: true, https: true, dns_resolves: true })).toContain("DNS record live");
+    expect(verifyLabel({ ok: true, https: true, dns_resolves: true })).toContain(
+      "your store is live",
+    );
     expect(verifyLabel({ ok: true, https: true })).toBe("HTTPS verified");
-    expect(verifyLabel({ ok: false })).toContain("propagating");
+    expect(verifyLabel({ ok: false })).toContain("Still going online");
   });
 });
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 import type { ChatMessage } from "../session";
@@ -8,10 +9,12 @@ import { RichText } from "./RichText";
 interface Props {
   messages: ChatMessage[];
   busy: boolean;
+  /** What the agent is doing now, already in the owner's language. */
   activity: string | undefined;
 }
 
 export function ChatPanel({ messages, busy, activity }: Props) {
+  const { t } = useT();
   const ref = useRef<HTMLDivElement>(null);
   // Keep the newest message in view: a sync with the DOM, not derived state.
   useEffect(() => {
@@ -23,7 +26,7 @@ export function ChatPanel({ messages, busy, activity }: Props) {
       ref={ref}
       role="log"
       aria-live="polite"
-      aria-label="Conversation"
+      aria-label={t("chat.label")}
       className="flex max-h-120 min-h-80 flex-1 flex-col gap-2.5 overflow-auto p-0.5"
     >
       {messages.map((m) => (
@@ -48,7 +51,7 @@ export function ChatPanel({ messages, busy, activity }: Props) {
               ))}
             </div>
           )}
-          {m.role === "bot" ? <RichText text={m.text} /> : m.text}
+          {m.i18nKey ? t(m.i18nKey) : m.role === "bot" ? <RichText text={m.text} /> : m.text}
         </div>
       ))}
       {busy && (
@@ -65,7 +68,7 @@ export function ChatPanel({ messages, busy, activity }: Props) {
               />
             ))}
           </span>
-          {activity ?? "Thinking…"}
+          {activity ?? t("chat.thinking")}
         </div>
       )}
     </div>

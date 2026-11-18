@@ -55,7 +55,7 @@ describe("languages", () => {
     expect(langOf("xx-IN" as LangCode)).toBe(LANGS[0]);
     expect(speechError("not-allowed")).toMatch(/permission/i);
     expect(speechError("bad-grammar")).toContain("(bad-grammar)");
-    expect(EXAMPLES.manage).toHaveLength(3);
+    expect(EXAMPLES.manage).toHaveLength(7);
   });
 });
 
@@ -64,7 +64,7 @@ describe("milestones, edge cases", () => {
     const m = byKey({ ...base, modelLabel: "Free model" });
     expect(m.understand?.by).toBe("Free model");
     expect(m.build?.by).toBe("Free model (vision)");
-    expect(m.domains?.by).toBe("GoDaddy Domains API");
+    expect(m.domains?.by).toBe("Domain search");
   });
 
   it("copes with results that don't match the expected shape", () => {

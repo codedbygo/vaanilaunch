@@ -80,8 +80,14 @@ export default tseslint.config(
     },
   },
   {
-    files: ["**/*.js"],
+    files: ["**/*.{js,mjs}"],
     ...tseslint.configs.disableTypeChecked,
+  },
+  {
+    // Node tooling (the i18n check prints its summary line).
+    files: ["scripts/**/*.mjs"],
+    languageOptions: { globals: { ...globals.node } },
+    rules: { "no-console": "off" },
   },
   prettier,
 );

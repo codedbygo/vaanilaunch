@@ -1,3 +1,4 @@
+import { Undo2 } from "lucide-react";
 import { useState, type Ref } from "react";
 
 import { useManageStore } from "@/app/stores/manage-store";
@@ -5,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dashboard } from "@/features/manage/components/Dashboard";
 import { useDashboard } from "@/features/manage/hooks";
+import { useT, type MessageKey } from "@/lib/i18n";
 
 import { EXAMPLES } from "../languages";
-import { deriveMilestones } from "../milestones";
+import { deriveMilestones, toolLabel } from "../milestones";
 import type { LaunchSession } from "../useLaunchSession";
 import { ChatPanel } from "./ChatPanel";
 import { Composer } from "./Composer";
@@ -18,7 +20,8 @@ import { Timeline } from "./Timeline";
 import { useClock } from "./useClock";
 
 export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTMLElement> }) {
-  const { state, approve, send, setCelebrate } = session;
+  const { state, approve, send, setCelebrate, failed, retry } = session;
+  const { t, locale } = useT();
   const creds = useManageStore((s) => s.creds);
   const clear = useManageStore((s) => s.clear);
   const [tab, setTab] = useState("steps");
@@ -42,13 +45,13 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
           }
         : null));
   const running = state.steps.filter((s) => s.status === "running").at(-1);
-  const [status, statusLabel]: [StudioStatus, string] = state.live
-    ? ["live", "● Live"]
+  const [status, statusKey]: [StudioStatus, MessageKey] = state.live
+    ? ["live", "studio.status.live"]
     : draftView && !draftView.approved
-      ? ["wait", "Waiting for your approval"]
+      ? ["wait", "studio.status.wait"]
       : state.busy
-        ? ["busy", "Agent working"]
-        : ["idle", managing ? "Ready for changes" : "Ready"];
+        ? ["busy", "studio.status.busy"]
+        : ["idle", managing ? "studio.status.readyManage" : "studio.status.ready"];
 
   const phoneSrc =
     state.live?.url ?? draftView?.previewUrl ?? (managing && d?.status === "live" ? d.url : null);
@@ -57,9 +60,9 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
   const timeline = (
     <>
       <h3 className="mb-3 flex flex-wrap items-baseline gap-2 font-bold">
-        Agent at work{" "}
+        {t("studio.agentAtWork")}{" "}
         <small className="text-xs font-medium text-muted-foreground">
-          every step is a real API call
+          {t("studio.agentAtWorkSub")}
         </small>
       </h3>
       <Timeline
@@ -71,11 +74,12 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
           approved: state.draft?.approved ?? false,
           live: state.live !== null,
           modelLabel: state.modelLabel,
+          locale,
         })}
       />
       {state.live && (
         <div className="mt-1.5 grid justify-items-start gap-1.5 rounded-xl bg-success-soft p-3.5">
-          <b>🎉 Live at</b>
+          <b>{t("studio.liveAt")}</b>
           <a
             href={state.live.url}
             target="_blank"
@@ -91,7 +95,7 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
               setCelebrate(true);
             }}
           >
-            Show QR code
+            {t("studio.showQr")}
           </Button>
         </div>
       )}
@@ -102,13 +106,13 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
     <section
       ref={ref}
       id="studio"
-      aria-label="Launch studio"
+      aria-label={t("studio.label")}
       className="relative z-10 mx-auto -mt-10 max-w-7xl scroll-mt-20 px-3 sm:px-8"
     >
       <StudioHeader
-        title={managing ? `Managing ${d?.name ?? creds.slug}` : "Launch studio"}
+        title={managing ? t("studio.managing", { name: d?.name ?? creds.slug }) : t("studio.title")}
         status={status}
-        statusLabel={statusLabel}
+        statusLabel={t(statusKey)}
         timerMs={timerMs}
         launched={state.launchMs !== null}
         onNewStore={managing ? clear : undefined}
@@ -116,18 +120,48 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
       {/* Chat | timeline | phone. The phone column is fixed to the 300 px device frame plus padding. */}
       <div className="grid grid-cols-1 gap-px overflow-hidden rounded-b-2xl bg-border shadow-soft md:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.95fr)_360px]">
         <div className="flex min-w-0 flex-col bg-card p-4.5">
-          <ChatPanel messages={state.messages} busy={state.busy} activity={running?.label} />
-          <div className="flex gap-1.5 overflow-x-auto pt-2.5">
-            {(managing ? EXAMPLES.manage : EXAMPLES.launch).map((e) => (
+          <ChatPanel
+            messages={state.messages}
+            busy={state.busy}
+            activity={running && toolLabel(running.tool, locale)}
+          />
+          {failed && !state.busy && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-2 self-start rounded-full"
+              onClick={() => void retry()}
+            >
+              ↻ {t("chat.retry")}
+            </Button>
+          )}
+          {managing && (
+            <div className="flex items-center justify-between gap-2 pt-2.5">
+              <span className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+                {t("studio.quick")}
+              </span>
               <Button
-                key={e}
+                variant="ghost"
+                size="sm"
+                className="rounded-full"
+                disabled={state.busy}
+                onClick={() => void send(t("studio.undoMessage"))}
+              >
+                <Undo2 aria-hidden="true" /> {t("studio.undo")}
+              </Button>
+            </div>
+          )}
+          <div className="flex gap-1.5 overflow-x-auto pt-2.5">
+            {(managing ? EXAMPLES.manage : EXAMPLES.launch).map((key) => (
+              <Button
+                key={key}
                 variant="outline"
                 size="sm"
                 disabled={state.busy}
-                onClick={() => void send(e)}
+                onClick={() => void send(t(key))}
                 className="max-w-xs flex-none justify-start rounded-full border-dashed text-muted-foreground"
               >
-                <span className="truncate">{e}</span>
+                <span className="truncate">{t(key)}</span>
               </Button>
             ))}
           </div>
@@ -139,8 +173,8 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
             launchedHere ? (
               <Tabs value={tab} onValueChange={setTab}>
                 <TabsList className="mb-3.5 w-full">
-                  <TabsTrigger value="steps">Launch steps</TabsTrigger>
-                  <TabsTrigger value="orders">Orders</TabsTrigger>
+                  <TabsTrigger value="steps">{t("studio.tabSteps")}</TabsTrigger>
+                  <TabsTrigger value="orders">{t("studio.tabOrders")}</TabsTrigger>
                 </TabsList>
                 <TabsContent value="steps">{timeline}</TabsContent>
                 <TabsContent value="orders">
@@ -160,7 +194,7 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
           {draftView &&
             (draftView.approved ? (
               <p role="status" className="font-bold text-success">
-                Approved. Publishing…
+                {t("studio.approved")}
               </p>
             ) : (
               <div className="grid w-full max-w-75 grid-cols-[minmax(0,1fr)_auto] gap-2">
@@ -169,7 +203,7 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
                   disabled={state.busy}
                   className="animate-glow rounded-full bg-brand font-bold text-white"
                 >
-                  ✅ Approve &amp; publish
+                  {t("studio.approve")}
                 </Button>
                 <Button
                   variant="outline"
@@ -179,7 +213,7 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
                     document.querySelector<HTMLTextAreaElement>("#studio textarea")?.focus()
                   }
                 >
-                  ✏️ Change
+                  {t("studio.change")}
                 </Button>
                 <a
                   href={draftView.previewUrl}
@@ -187,7 +221,7 @@ export function Studio({ session, ref }: { session: LaunchSession; ref: Ref<HTML
                   rel="noopener noreferrer"
                   className="col-span-2 text-center text-sm text-muted-foreground underline"
                 >
-                  Open full preview ↗
+                  {t("studio.openPreview")}
                 </a>
               </div>
             ))}

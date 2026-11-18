@@ -25,7 +25,6 @@ function fakeSession(over: Partial<LaunchSession> = {}): LaunchSession {
   return {
     state: initialSession("hi"),
     lang: "te-IN",
-    setLang: vi.fn(),
     photos: [],
     send: vi.fn(() => Promise.resolve()),
     addPhotos: vi.fn(() => Promise.resolve()),
@@ -33,6 +32,8 @@ function fakeSession(over: Partial<LaunchSession> = {}): LaunchSession {
     approve: vi.fn(() => Promise.resolve()),
     note: vi.fn(),
     setCelebrate: vi.fn(),
+    failed: false,
+    retry: vi.fn(() => Promise.resolve()),
     ...over,
   };
 }
@@ -64,37 +65,40 @@ function installMic() {
 }
 
 describe("Composer", () => {
-  it("sends what was said, ignores silence, and reports mic errors", async () => {
+  it("puts what was heard in the box to check and fix, sends only on Send, and reports mic errors", async () => {
     const recs = installMic();
     const session = fakeSession();
     render(<Composer session={session} />);
     const user = userEvent.setup();
     const mic = screen.getByRole("button", { name: /speak in తెలుగు/i });
     await user.click(mic);
-    expect(screen.getByRole("button", { name: "Stop listening and send" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop listening" })).toBeInTheDocument();
     expect(screen.getByText("Listening… take your time")).toBeInTheDocument();
     act(() => {
       recs[0]?.onresult?.({
         resultIndex: 0,
-        results: [Object.assign([{ transcript: "ఇడ్లీ" }], { isFinal: true })],
+        results: [Object.assign([{ transcript: "ఇడ్లీ 80" }], { isFinal: true })],
       });
     });
-    await user.click(screen.getByRole("button", { name: "Stop listening and send" }));
-    expect(session.send).toHaveBeenCalledWith("ఇడ్లీ");
-
-    await user.click(screen.getByRole("button", { name: /speak in/i }));
-    await user.click(screen.getByRole("button", { name: "Stop listening and send" }));
-    expect(session.send).toHaveBeenCalledTimes(1); // nothing said, nothing sent
+    await user.click(screen.getByRole("button", { name: "Stop listening" }));
+    const box = screen.getByRole("textbox", { name: "Message" });
+    expect(box).toHaveValue("ఇడ్లీ 80");
+    expect(box).toHaveFocus();
+    expect(session.send).not.toHaveBeenCalled(); // nothing goes until the owner has checked it
+    await user.clear(box);
+    await user.type(box, "ఇడ్లీ 90");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(session.send).toHaveBeenCalledWith("ఇడ్లీ 90");
 
     await user.click(screen.getByRole("button", { name: /speak in/i }));
     act(() => {
-      recs[2]?.onerror?.({ error: "not-allowed" });
-      recs[2]?.onend?.();
+      recs[1]?.onerror?.({ error: "not-allowed" });
+      recs[1]?.onend?.();
     });
     expect(session.note).toHaveBeenCalledWith(expect.stringMatching(/permission/i));
   });
 
-  it("handles photos, the file picker, language deselect and empty Enter", async () => {
+  it("handles photos, the file picker and empty Enter", async () => {
     const session = fakeSession({
       photos: [{ key: "k1", url: "/media/a.jpg", id: "aaaaaaaaaaaaaaaa" }],
     });
@@ -112,10 +116,6 @@ describe("Composer", () => {
     Object.defineProperty(picker, "files", { value: null, configurable: true });
     picker.dispatchEvent(new Event("change", { bubbles: true }));
     expect(session.addPhotos).toHaveBeenLastCalledWith([]);
-    await user.click(screen.getByRole("radio", { name: "తెలుగు" })); // clicking the active one deselects
-    expect(session.setLang).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("radio", { name: "हिन्दी" }));
-    expect(session.setLang).toHaveBeenCalledWith("hi-IN");
   });
 
   it("does not send on Enter when there is nothing to send, and disables the mic while busy", async () => {
@@ -163,7 +163,12 @@ describe("RichText", () => {
 
 describe("Timeline", () => {
   it("lists available domains with their prices in any currency", () => {
-    const domains = MILESTONES.map((m): MilestoneState => ({ ...m, status: "idle" }));
+    const domains = MILESTONES.map((m): MilestoneState => ({
+      ...m,
+      label: m.key,
+      by: m.actor,
+      status: "idle",
+    }));
     const withDomains = domains.map((m) =>
       m.key === "domains"
         ? {
@@ -287,5 +292,46 @@ describe("Showcase", () => {
     );
     renderWithProviders(<Showcase />);
     expect(await screen.findByText("?")).toBeInTheDocument();
+  });
+});
+
+describe("launch checklist", () => {
+  it("scores only what the store really has and links the QR code", async () => {
+    const checklist = [
+      { key: "name", done: true },
+      { key: "description", done: true },
+      { key: "photos", done: false },
+      { key: "phone", done: true },
+      { key: "hours", done: false },
+      { key: "location", done: true },
+      { key: "seo_title", done: true },
+      { key: "seo_description", done: true },
+      { key: "published", done: true },
+    ];
+    server.use(http.post("*/api/manage", () => HttpResponse.json({ ...dashboard, checklist })));
+    renderWithProviders(<Dashboard creds={creds} />);
+    const card = await screen.findByRole("region", { name: "Launch readiness" });
+    expect(card).toHaveTextContent("78%");
+    expect(card).toHaveTextContent("○ Business hours");
+    expect(card).toHaveTextContent("✓ Website published");
+    expect(card).toHaveTextContent(/Tell the agent what is missing/);
+    expect(screen.getByRole("link", { name: /Download QR code/ })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/api/qr?data=") as unknown,
+    );
+  });
+
+  it("shows 100% without the hint when everything is done, and no QR for a draft", async () => {
+    const checklist = ["name", "published"].map((key) => ({ key, done: true }));
+    server.use(
+      http.post("*/api/manage", () =>
+        HttpResponse.json({ ...dashboard, status: "draft", checklist }),
+      ),
+    );
+    renderWithProviders(<Dashboard creds={creds} />);
+    const card = await screen.findByRole("region", { name: "Launch readiness" });
+    expect(card).toHaveTextContent("100%");
+    expect(card).not.toHaveTextContent(/Tell the agent/);
+    expect(screen.queryByRole("link", { name: /Download QR code/ })).not.toBeInTheDocument();
   });
 });

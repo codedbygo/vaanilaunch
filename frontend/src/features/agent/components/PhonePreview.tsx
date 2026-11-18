@@ -1,7 +1,10 @@
+import { useT } from "@/lib/i18n";
+
 // The store on a phone. The iframe renders the real storefront at phone width. It is sandboxed
 // without same-origin access, so the store page can never read this app's storage (where the
 // owner's private key lives); ordering happens on the real store page, not in the preview.
 export function PhonePreview({ src, version }: { src: string | null; version: string }) {
+  const { t } = useT();
   return (
     <div className="grid justify-items-center gap-2">
       <div className="phone">
@@ -11,13 +14,13 @@ export function PhonePreview({ src, version }: { src: string | null; version: st
             <iframe
               key={version}
               src={src}
-              title="Store preview"
+              title={t("preview.title")}
               sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
             />
           ) : (
             <div
               className="grid h-full content-start gap-2.5 px-3.5 pt-10 pb-3.5"
-              aria-label="Your store will appear here"
+              aria-label={t("preview.empty")}
             >
               <div className="shimmer h-36 animate-shimmer rounded-xl" />
               <div className="shimmer h-3.5 animate-shimmer rounded-xl" />
@@ -26,18 +29,12 @@ export function PhonePreview({ src, version }: { src: string | null; version: st
                 <div className="shimmer h-36 animate-shimmer rounded-xl" />
                 <div className="shimmer h-36 animate-shimmer rounded-xl" />
               </div>
-              <p className="mt-4 text-center text-sm text-muted-foreground">
-                Your store will appear here
-              </p>
+              <p className="mt-4 text-center text-sm text-muted-foreground">{t("preview.empty")}</p>
             </div>
           )}
         </div>
       </div>
-      {src && (
-        <p className="text-center text-xs text-muted-foreground">
-          Preview only. To order, open the store or scan its QR code.
-        </p>
-      )}
+      {src && <p className="text-center text-xs text-muted-foreground">{t("preview.note")}</p>}
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+import { translate, useLocaleStore } from "@/lib/i18n";
+
 interface ErrorBoundaryProps {
   children: ReactNode;
   /** Rendered instead of the children after a render error; reset clears it. */
@@ -45,16 +47,18 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     if (this.props.fallback) {
       return this.props.fallback(error, this.reset);
     }
+    // A class component can't use hooks; read the language straight from the store.
+    const locale = useLocaleStore.getState().locale;
     return (
       <section role="alert" className="mx-auto max-w-5xl px-4 py-8">
-        <h1 className="text-2xl font-semibold">Something went wrong</h1>
-        <p className="mt-2 text-muted-foreground">{error.message}</p>
+        <h1 className="text-2xl font-semibold">{translate(locale, "page.crashed")}</h1>
+        <p className="mt-2 text-muted-foreground">{translate(locale, "error.generic")}</p>
         <button
           type="button"
           onClick={this.reset}
           className="mt-4 inline-flex h-9 items-center rounded-md bg-primary px-4 font-medium text-primary-foreground hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
-          Try again
+          {translate(locale, "page.retry")}
         </button>
       </section>
     );

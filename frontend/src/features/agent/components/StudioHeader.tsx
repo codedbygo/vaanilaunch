@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { formatDuration } from "@/lib/format";
+import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 export type StudioStatus = "live" | "wait" | "busy" | "listen" | "idle";
@@ -22,6 +23,7 @@ interface Props {
 }
 
 export function StudioHeader({ title, status, statusLabel, timerMs, launched, onNewStore }: Props) {
+  const { t } = useT();
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-t-2xl border-b bg-card px-5.5 py-4.5 shadow-soft">
       <div className="flex flex-wrap items-center gap-3">
@@ -40,13 +42,13 @@ export function StudioHeader({ title, status, statusLabel, timerMs, launched, on
             className="px-0 font-semibold text-accent-foreground"
             onClick={onNewStore}
           >
-            + Start a new store
+            {t("studio.newStore")}
           </Button>
         )}
         {timerMs !== null && (
           <div className="flex flex-col items-end leading-tight">
             <span className="text-xs tracking-widest text-muted-foreground uppercase">
-              {launched ? "Launched in" : "Launch timer"}
+              {launched ? t("studio.launchedIn") : t("studio.launchTimer")}
             </span>
             <b
               className={cn(

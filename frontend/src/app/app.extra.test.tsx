@@ -8,6 +8,7 @@ import { useManageStore } from "@/app/stores/manage-store";
 import { Hero } from "@/components/marketing/Hero";
 import { ContactForm } from "@/features/contact/components/ContactForm";
 import { apiFetch } from "@/lib/api";
+import { useLocaleStore } from "@/lib/i18n";
 import { dashboard, server, sse } from "@/test/msw";
 import { createTestQueryClient, renderWithProviders } from "@/test/render";
 
@@ -46,14 +47,15 @@ describe("App, more paths", () => {
     expect(await screen.findByRole("region", { name: "Launch studio" })).toBeInTheDocument();
   });
 
-  it("Start speaking scrolls to the studio and focuses the message box", async () => {
+  it("Create my website scrolls to the studio and focuses the message box", async () => {
     render(
       <App
         queryClient={createTestQueryClient()}
         history={createMemoryHistory({ initialEntries: ["/"] })}
       />,
     );
-    await userEvent.click(await screen.findByRole("button", { name: /start speaking/i }));
+    const hero = await screen.findByRole("banner");
+    await userEvent.click(within(hero).getByRole("button", { name: /create my website/i }));
     const studio = screen.getByRole("region", { name: "Launch studio" });
     expect(within(studio).getByRole("textbox", { name: "Message" })).toHaveFocus();
   });
@@ -124,11 +126,12 @@ describe("App, more paths", () => {
 
 describe("Hero", () => {
   it("cycles the greeting through the languages", () => {
+    useLocaleStore.setState({ locale: "te-IN" });
     vi.useFakeTimers();
     render(<Hero onStart={vi.fn()} />);
     expect(screen.getByText("నమస్తే")).toBeInTheDocument();
     act(() => {
-      vi.advanceTimersByTime(1600);
+      vi.advanceTimersByTime(2200);
     });
     expect(screen.getByText("नमस्ते")).toBeInTheDocument();
     vi.useRealTimers();

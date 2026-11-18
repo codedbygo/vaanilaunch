@@ -4,6 +4,7 @@ import { manageUrl } from "@/app/stores/manage-store";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { formatDuration } from "@/lib/format";
+import { useT } from "@/lib/i18n";
 
 import { qrUrl } from "../api";
 import type { ManageCreds } from "../schemas";
@@ -20,8 +21,9 @@ interface Props {
 
 export function LaunchDialog({ open, onOpenChange, url, name, launchMs, creds }: Props) {
   const [copied, setCopied] = useState(false);
-  const store = name || "Your store";
-  const share = `https://wa.me/?text=${encodeURIComponent(`${store} is now online! Order here: ${url}`)}`;
+  const { t } = useT();
+  const store = name || t("launch.yourStore");
+  const share = `https://wa.me/?text=${encodeURIComponent(t("launch.shareText", { store, url }))}`;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {open && <Confetti />}
@@ -29,23 +31,31 @@ export function LaunchDialog({ open, onOpenChange, url, name, launchMs, creds }:
         <div className="text-5xl" aria-hidden="true">
           🎉
         </div>
-        <DialogTitle className="text-2xl font-extrabold">{store} is live!</DialogTitle>
+        <DialogTitle className="text-2xl font-extrabold">
+          {t("launch.title", { store })}
+        </DialogTitle>
         <DialogDescription>
           {launchMs === null ? (
-            "Your store is online."
+            t("launch.online")
           ) : (
             <>
-              From first words to a live store in{" "}
-              <b className="text-lg text-success">{formatDuration(launchMs)}</b>
+              {t("launch.time")} <b className="text-lg text-success">{formatDuration(launchMs)}</b>
             </>
           )}
         </DialogDescription>
         <img
           className="launch-qr mx-auto rounded-2xl border p-2"
           src={qrUrl(url)}
-          alt={`QR code for ${url}`}
+          alt={t("launch.qrAlt", { url })}
         />
-        <p className="text-sm text-muted-foreground">Scan to open the store on your phone</p>
+        <p className="text-sm text-muted-foreground">{t("launch.scan")}</p>
+        <a
+          className="text-sm font-semibold text-accent-foreground underline"
+          href={qrUrl(url)}
+          download="store-qr.svg"
+        >
+          ⬇ {t("launch.downloadQr")}
+        </a>
         <a
           className="font-bold break-all text-accent-foreground underline"
           href={url}
@@ -57,7 +67,7 @@ export function LaunchDialog({ open, onOpenChange, url, name, launchMs, creds }:
         <div className="flex flex-wrap justify-center gap-2">
           <Button asChild className="rounded-full bg-brand text-white shadow-brand">
             <a href={url} target="_blank" rel="noopener noreferrer">
-              Open store
+              {t("launch.open")}
             </a>
           </Button>
           <Button
@@ -69,17 +79,17 @@ export function LaunchDialog({ open, onOpenChange, url, name, launchMs, creds }:
               })
             }
           >
-            {copied ? "Copied ✓" : "Copy link"}
+            {copied ? t("launch.copied") : t("launch.copy")}
           </Button>
           <Button asChild className="rounded-full bg-whatsapp text-white">
             <a href={share} target="_blank" rel="noopener noreferrer">
-              Share on WhatsApp
+              {t("launch.share")}
             </a>
           </Button>
         </div>
         {creds && (
           <p className="text-xs break-all text-muted-foreground">
-            Keep your private manage link: <code>{manageUrl(creds)}</code>
+            {t("launch.manageLink")} <code>{manageUrl(creds)}</code>
           </p>
         )}
       </DialogContent>

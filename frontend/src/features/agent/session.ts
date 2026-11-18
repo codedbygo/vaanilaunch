@@ -1,3 +1,5 @@
+import type { MessageKey } from "@/lib/i18n";
+
 import {
   draftResultSchema,
   publishResultSchema,
@@ -14,6 +16,8 @@ export interface ChatMessage {
   id: number;
   role: "me" | "bot";
   text: string;
+  /** A message from the app itself, shown in whatever language the owner picks now. */
+  i18nKey?: MessageKey;
   images?: string[];
 }
 
@@ -53,9 +57,9 @@ export type SessionAction =
   | { type: "approved" }
   | { type: "celebrate"; open: boolean };
 
-export function initialSession(welcome: string): SessionState {
+export function initialSession(welcome: string, i18nKey?: MessageKey): SessionState {
   return {
-    messages: [{ id: 0, role: "bot", text: welcome }],
+    messages: [{ id: 0, role: "bot", text: welcome, ...(i18nKey ? { i18nKey } : {}) }],
     steps: [],
     draft: null,
     live: null,
@@ -105,7 +109,8 @@ function applyStep(s: SessionState, step: Step, now: number, preview?: string): 
     const v = verifyResultSchema.safeParse(step.result);
     if (v.success) next = { ...next, live: { ...next.live, verify: v.data } };
   }
-  if (step.tool === "update_site") next = { ...next, previewVersion: next.previewVersion + 1 };
+  if (step.tool === "update_site" || step.tool === "undo_last_change")
+    next = { ...next, previewVersion: next.previewVersion + 1 };
   return next;
 }
 

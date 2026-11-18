@@ -1,15 +1,18 @@
 import { Link } from "@tanstack/react-router";
 
+import { useT } from "@/lib/i18n";
+
 /** NotFound answers any path the route tree does not know. */
 export function NotFound() {
+  const { t } = useT();
   return (
     <section aria-labelledby="not-found-heading">
       <h1 id="not-found-heading" className="text-2xl font-semibold">
-        Page not found
+        {t("page.notFound")}
       </h1>
       <p className="mt-2 text-muted-foreground">
         <Link to="/" className="underline">
-          Back to the start
+          {t("page.backHome")}
         </Link>
       </p>
     </section>
