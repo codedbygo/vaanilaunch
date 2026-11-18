@@ -56,7 +56,7 @@ export function Hero({ onStart }: { onStart: () => void }) {
       <div className="relative mx-auto grid max-w-7xl items-center gap-10 lg:grid-cols-[minmax(0,1fr)_400px]">
         <div className="relative z-10 max-w-3xl">
           <div className="mb-5 inline-block rounded-full border border-white/20 bg-white/5 px-3.5 py-1.5 text-sm text-saffron">
-            GoDaddy Inclusive Innovation Hackathon 2026
+            Built for the GoDaddy Inclusive Innovation Hackathon 2026
           </div>
           <h1 className="text-4xl leading-tight font-extrabold tracking-tight sm:text-6xl lg:text-7xl">
             <Greeting />
