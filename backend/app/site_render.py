@@ -117,7 +117,24 @@ def service_key(name: str) -> str:
     return " ".join(name.lower().split())
 
 
-def _lang_block(l: dict, i: int, products: list, facts: str = "", svc: tuple = ((), {})) -> str:
+_ICON_PATHS = {
+    "pin": '<path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+    "clock": '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    "card": '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/>',
+    "chat": '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
+    "phone": '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>',
+    "arrow": '<path d="M5 12h14M13 6l6 6-6 6"/>',
+}
+
+
+def _ic(name: str) -> str:
+    return f'<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{_ICON_PATHS[name]}</svg>'
+
+
+def _lang_block(l: dict, i: int, products: list, facts: str = "", svc: tuple = ((), {}),
+                page: dict | None = None) -> str:
+    page = page or {}
+    wa, place, about_pic = page.get("wa", ""), page.get("place", ""), page.get("about_pic")
     english = str(l.get("lang_code", "")).lower().startswith("en")
     prods = "".join(_product_card(p, english) for p in products)
     names, pics = svc
@@ -136,69 +153,117 @@ def _lang_block(l: dict, i: int, products: list, facts: str = "", svc: tuple = (
                    for f in as_list(l.get("faqs")) if isinstance(f, dict))
     quotes = "".join(f"<figure class=card><blockquote>“{_e(t.get('text'))}”</blockquote><figcaption>{_e(t.get('name'))}</figcaption></figure>"
                      for t in as_list(l.get("testimonials")) if isinstance(t, dict) and t.get("text"))
-    cta = f'<a class="btn" href="#menu-{i}">{_e(l.get("cta") or "Order now")}</a>' if products else ""
+    cta = (f'<a class="btn" href="#menu-{i}">{_e(l.get("cta") or "Order now")} {_ic("arrow")}</a>' if products
+           else f'<a class="btn" href="#services-{i}">{_e(l.get("cta") or "See services")} {_ic("arrow")}</a>' if services else "")
+    wa_btn = f'<a class="btn ghost" href="https://wa.me/{_e(wa)}" target="_blank" rel="noopener">{_ic("chat")} WhatsApp</a>' if wa else ""
+    about_img = f'<img src="/media/{_e(about_pic)}.jpg" alt="" loading="lazy">' if about_pic else ""
+    head = lambda key, default, kicker: f'<span class="kicker">{_e(kicker)}</span><h2>{_e(l.get(key) or default)}</h2>'
     return f"""
 <div class="lang" data-lang="{_e(l.get('lang_code'))}" {'hidden' if i else ''}>
-  <header class="hero"><h1>{_e(l.get('hero_title'))}</h1><p>{_e(l.get('hero_subtitle'))}</p>{cta}</header>
+  <header class="hero"><div class="wrap">{f'<span class="eyebrow">{_ic("pin")} {_e(place)}</span>' if place else ''}<h1>{_e(l.get('hero_title'))}</h1><p>{_e(l.get('hero_subtitle'))}</p><div class="ctas">{cta}{wa_btn}</div></div></header>
   {facts}
-  {f'<section id="menu-{i}"><h2>{_e(l.get("products_heading") or "Our products")}</h2><div class="prods">{prods}</div></section>' if prods else ''}
-  {f'<section><h2>{_e(l.get("services_heading") or "Services")}</h2><div class="grid">{services}</div></section>' if services else ''}
-  <section><h2>{_e(l.get('about_heading') or 'About')}</h2><p>{_e(l.get('about'))}</p></section>
-  {f'<section><h2>{_e(l.get("testimonials_heading") or "What customers say")}</h2><div class="grid">{quotes}</div></section>' if quotes else ''}
-  {f'<section><h2>{_e(l.get("faq_heading") or "FAQ")}</h2>{faqs}</section>' if faqs else ''}
+  {f'<section id="menu-{i}">{head("products_heading", "Our products", "Menu")}<div class="prods">{prods}</div></section>' if prods else ''}
+  {f'<section id="services-{i}">{head("services_heading", "Services", "What we offer")}<div class="grid">{services}</div></section>' if services else ''}
+  <section>{head("about_heading", "About", "Our story")}<div class="about{' has-img' if about_img else ''}"><p>{_e(l.get('about'))}</p>{about_img}</div></section>
+  {f'<section>{head("testimonials_heading", "What customers say", "Reviews")}<div class="grid">{quotes}</div></section>' if quotes else ''}
+  {f'<section>{head("faq_heading", "FAQ", "Questions")}{faqs}</section>' if faqs else ''}
 </div>"""
 
 
-CSS = """
-*{box-sizing:border-box}body{margin:0;font-family:system-ui,'Noto Sans','Noto Sans Telugu','Noto Sans Devanagari',sans-serif;color:#222;background:var(--bg);line-height:1.55;padding-bottom:80px}
-.notice{background:#222;color:#fff;text-align:center;padding:8px 12px;font-size:.92rem}
+CSS = r"""
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;font-family:system-ui,-apple-system,'Segoe UI','Noto Sans','Noto Sans Telugu','Noto Sans Devanagari',sans-serif;color:#1d1d1f;background:var(--bg);line-height:1.6;-webkit-font-smoothing:antialiased;padding-bottom:84px}
+img{max-width:100%}a{color:inherit}
+.wrap{max-width:1120px;margin:auto;padding:0 20px}
+.notice{background:#1d1d1f;color:#fff;text-align:center;padding:9px 14px;font-size:.9rem}
 .preview{background:#fff3bf;color:#5c4400;text-align:center;padding:8px;font-size:.9rem;font-weight:600}
-nav{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 16px;background:#fff;box-shadow:0 1px 4px #0001;position:sticky;top:0;z-index:5}
-.brand{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--p);font-size:1.1rem}
-.logo{width:36px;height:36px;border-radius:50%;background:var(--p);color:#fff;display:grid;place-items:center;font-size:1.1rem}
-nav .langs button{border:1px solid var(--p);background:#fff;color:var(--p);border-radius:20px;padding:4px 12px;margin-left:4px;cursor:pointer;font:inherit;font-size:.85rem}
-nav .langs button.on{background:var(--p);color:#fff}
-.hero{padding:64px 18px 56px;text-align:center;background:linear-gradient(135deg,var(--p),color-mix(in srgb,var(--p) 55%,#000));color:#fff}
-.hero h1{font-size:clamp(2rem,7vw,3.2rem);margin:0 0 8px;letter-spacing:-.01em;text-shadow:0 2px 12px #0004}.hero p{margin:0;opacity:.95}
-.btn{display:inline-block;margin-top:18px;background:#fff;color:var(--p);padding:12px 26px;border-radius:30px;text-decoration:none;font-weight:700}
-section{max-width:1000px;margin:auto;padding:28px 16px}h2{color:var(--p);margin-top:0}
-.prods{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}@media(min-width:700px){.prods{grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}}
-.prod{background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px #0000000f;display:flex;flex-direction:column}
-.prod img,.prod .ph{width:100%;aspect-ratio:1/1;object-fit:cover;background:color-mix(in srgb,var(--p) 15%,#fff)}
-.svc img,.svc .ph{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:10px;margin-bottom:10px;display:block}
-.svc .ph{display:grid;place-items:center;font-size:3.2rem;line-height:1;background:radial-gradient(circle at 50% 40%,#fff,color-mix(in srgb,var(--p) 14%,#fff))}
+.ic{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+nav{position:sticky;top:0;z-index:20;background:color-mix(in srgb,#fff 86%,transparent);backdrop-filter:saturate(1.6) blur(14px);-webkit-backdrop-filter:saturate(1.6) blur(14px);border-bottom:1px solid #0000000d}
+nav .wrap{display:flex;justify-content:space-between;align-items:center;gap:10px;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:1.08rem;letter-spacing:-.01em;min-width:0}
+.logo{width:38px;height:38px;border-radius:12px;background:var(--p);color:#fff;display:grid;place-items:center;font-size:1.1rem;flex:none}
+.bn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.navr{display:flex;align-items:center;gap:8px}
+.navlink{font-size:.92rem;text-decoration:none;opacity:.75;padding:6px 8px}.navlink:hover{opacity:1}
+.langs{display:flex;background:#0000000a;border-radius:999px;padding:3px}
+.langs button{border:0;background:none;color:#333;border-radius:999px;padding:5px 12px;cursor:pointer;font:inherit;font-size:.82rem}
+.langs button.on{background:#fff;color:#111;box-shadow:0 1px 4px #0000001f;font-weight:600}
+.wa{display:inline-flex;align-items:center;gap:6px;background:#25d366;color:#fff;text-decoration:none;border-radius:999px;padding:8px 14px;font-size:.88rem;font-weight:600}
+.hero{position:relative;color:#fff;background:linear-gradient(135deg,var(--p),color-mix(in srgb,var(--p) 50%,#000));overflow:hidden}
+.hero .wrap{min-height:min(76vh,640px);display:flex;flex-direction:column;justify-content:flex-end;padding-top:90px;padding-bottom:110px}
+.eyebrow{display:inline-flex;align-self:flex-start;gap:8px;align-items:center;font-size:.8rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;background:#ffffff26;border:1px solid #ffffff40;border-radius:999px;padding:5px 12px;backdrop-filter:blur(6px)}
+.hero h1{font-size:clamp(2.3rem,7vw,4.4rem);line-height:1.05;margin:16px 0 12px;letter-spacing:-.025em;max-width:16ch;text-wrap:balance}
+.hero p{margin:0;font-size:clamp(1.02rem,2.4vw,1.25rem);opacity:.92;max-width:52ch}
+.ctas{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
+.btn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:#111;padding:13px 24px;border-radius:999px;text-decoration:none;font-weight:700;box-shadow:0 8px 24px #0000002e;transition:transform .2s}
+.btn:hover{transform:translateY(-2px)}.btn.ghost{background:#ffffff1f;color:#fff;border:1px solid #ffffff59;box-shadow:none;backdrop-filter:blur(6px)}
+.facts{position:relative;z-index:2;margin:-56px auto 0;max-width:1080px;width:calc(100% - 40px);background:#fff;border-radius:20px;box-shadow:0 18px 50px #00000014;display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.facts span{display:flex;align-items:center;gap:10px;padding:18px 20px;font-size:.93rem;font-weight:500}
+.facts span+span{border-left:1px solid #0000000d}.facts .ic{color:var(--p);width:20px;height:20px}
+section{max-width:1120px;margin:auto;padding:72px 20px 8px}
+.kicker{display:block;color:var(--p);font-size:.78rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;margin-bottom:8px}
+h2{font-size:clamp(1.7rem,4vw,2.4rem);line-height:1.15;margin:0 0 28px;letter-spacing:-.02em}
+.prods{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px}
+@media(min-width:700px){.prods{grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:22px}}
+.prod{background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 1px 2px #0000000a,0 8px 28px #0000000d;display:flex;flex-direction:column;transition:transform .25s,box-shadow .25s}
+.prod:hover,.svc:hover{transform:translateY(-4px);box-shadow:0 2px 4px #0000000a,0 18px 40px #00000017}
+.prod img,.prod .ph{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;transition:transform .5s}
+.prod:hover img,.svc:hover img{transform:scale(1.05)}
 .prod .ph{display:grid;place-items:center;font-size:4rem;line-height:1;background:radial-gradient(circle at 50% 40%,#fff,color-mix(in srgb,var(--p) 14%,#fff))}
-.pb{padding:12px 14px;display:flex;flex-direction:column;flex:1}.pb h3{margin:0;font-size:1.05rem}.sec{color:#777;font-size:.85rem}
-.pb p{color:#555;font-size:.9rem;margin:6px 0 10px;flex:1}.row{display:flex;justify-content:space-between;align-items:center;gap:6px}.row strong small{display:block;font-weight:500;color:#777;font-size:.75rem}
-.qty{display:flex;align-items:center;gap:8px}.qty button{width:32px;height:32px;border-radius:50%;border:0;background:var(--p);color:#fff;font-size:1.1rem;cursor:pointer}
-.qty .minus{background:#eee;color:#333}.soldout{color:#b00;font-size:.85rem;font-weight:600}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}.card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 2px 8px #0001}
-details{background:#fff;border-radius:8px;padding:12px;margin:8px 0}
-form{display:grid;gap:10px;max-width:480px}input,textarea{padding:10px;border:1px solid #ccc;border-radius:8px;font:inherit;width:100%}
-.pbtn{background:var(--p);color:#fff;border:0;padding:12px;border-radius:10px;font:inherit;font-weight:700;cursor:pointer}
-.cartbar{position:fixed;left:12px;right:12px;bottom:12px;max-width:640px;margin:auto;background:var(--p);color:#fff;border-radius:14px;padding:12px 16px;display:none;justify-content:space-between;align-items:center;box-shadow:0 6px 20px #0003;z-index:10}
-.cartbar button{background:#fff;color:var(--p);border:0;border-radius:10px;padding:8px 16px;font:inherit;font-weight:700;cursor:pointer}
-.wa{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#25d366;color:#fff;text-decoration:none;margin-left:6px;font-size:17px;vertical-align:middle}
-.facts{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:14px 12px 0;max-width:1000px;margin:auto}.facts span{background:#fff;border-radius:999px;padding:6px 12px;font-size:.82rem;box-shadow:0 1px 6px #0000000f}
-.bn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw}@media(max-width:420px){.bn{max-width:28vw}nav{padding:10px 12px}nav .langs button{padding:4px 9px;font-size:.78rem;margin-left:3px}.wa{width:30px;height:30px;font-size:15px;margin-left:4px}}.langs{display:flex;align-items:center;flex-wrap:nowrap}
-dialog{border:0;border-radius:16px;padding:20px;width:min(440px,92vw);max-height:90vh}dialog::backdrop{background:#0007}
-.lines{margin:0 0 12px;padding:0;list-style:none}.lines li{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed #eee}
+.pb{padding:14px 16px 16px;display:flex;flex-direction:column;flex:1;position:relative;background:#fff}.pb h3{margin:0;font-size:1.04rem;letter-spacing:-.01em}.sec{color:#86868b;font-size:.85rem}
+.pb p{color:#6e6e73;font-size:.9rem;margin:6px 0 14px;flex:1;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.row{display:flex;justify-content:space-between;align-items:center;gap:6px}.row strong{font-size:1.12rem}.row strong small{display:block;font-weight:500;color:#86868b;font-size:.74rem}
+.qty{display:flex;align-items:center;gap:8px;background:#0000000a;border-radius:999px;padding:3px}.qty .n{min-width:14px;text-align:center;font-weight:600}
+.qty button{width:32px;height:32px;border-radius:50%;border:0;background:var(--p);color:#fff;font-size:1.1rem;cursor:pointer}
+.qty .minus{background:#fff;color:#333;box-shadow:0 1px 3px #0000001a}.soldout{color:#b00020;font-size:.85rem;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px}
+.card{background:#fff;border-radius:18px;padding:20px;box-shadow:0 1px 2px #0000000a,0 8px 28px #0000000d}
+.svc{padding:0;overflow:hidden;display:flex;flex-direction:column;transition:transform .25s,box-shadow .25s}
+.svc img,.svc .ph{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;transition:transform .5s}
+.svc .ph{display:grid;place-items:center;font-size:3.4rem;line-height:1;background:radial-gradient(circle at 50% 40%,#fff,color-mix(in srgb,var(--p) 14%,#fff))}
+.svc h3{margin:16px 18px 4px;font-size:1.05rem;position:relative;background:#fff}.svc p{margin:0 18px;color:#6e6e73;font-size:.9rem;flex:1}
+.svc strong{display:inline-block;margin:14px 18px 18px;align-self:flex-start;background:color-mix(in srgb,var(--p) 12%,#fff);color:color-mix(in srgb,var(--p) 80%,#000);border-radius:999px;padding:5px 12px;font-size:.92rem}
+.about{display:grid;gap:36px;align-items:center}@media(min-width:800px){.about.has-img{grid-template-columns:1.1fr .9fr}}
+.about p{font-size:1.08rem;color:#424245;margin:0;white-space:pre-line}
+.about img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:22px;box-shadow:0 18px 50px #00000017}
+figure.card{margin:0;position:relative;padding-top:42px}figure.card:before{content:"\201C";position:absolute;top:2px;left:18px;font-size:4rem;line-height:1;color:var(--p);opacity:.35;font-family:Georgia,serif}
+blockquote{margin:0 0 10px;font-size:1.02rem}figcaption{color:#6e6e73;font-size:.88rem;font-weight:600}
+details{background:#fff;border-radius:14px;padding:16px 20px;margin:10px 0;box-shadow:0 1px 2px #0000000a}
+summary{cursor:pointer;font-weight:600;list-style:none;display:flex;justify-content:space-between;gap:12px}summary::-webkit-details-marker{display:none}
+summary:after{content:"+";color:var(--p);font-size:1.4rem;line-height:1}details[open] summary:after{content:"\2212"}details p{color:#6e6e73;margin:10px 0 0}
+.contact{display:grid;gap:22px}@media(min-width:800px){.contact{grid-template-columns:.9fr 1.1fr}}
+.cinfo{display:grid;gap:14px;align-content:start}.cinfo p{display:flex;gap:12px;align-items:flex-start;margin:0}.cinfo .ic{color:var(--p);margin-top:3px}
+.cbtns{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}.cbtn{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:10px 18px;text-decoration:none;font-weight:600;border:1px solid #0000001a;background:#fff}
+.cbtn.green{background:#25d366;color:#fff;border-color:#25d366}.social a{margin-right:14px;font-weight:600;color:var(--p)}
+form{display:grid;gap:10px}input,textarea{padding:12px 14px;border:1px solid #0000001f;border-radius:12px;font:inherit;width:100%;background:#fff}
+input:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--p) 40%,transparent);border-color:var(--p)}
+.pbtn{background:var(--p);color:#fff;border:0;padding:13px;border-radius:12px;font:inherit;font-weight:700;cursor:pointer}
+.cartbar{position:fixed;left:12px;right:12px;bottom:12px;max-width:640px;margin:auto;background:#1d1d1f;color:#fff;border-radius:18px;padding:12px 14px 12px 20px;display:none;justify-content:space-between;align-items:center;box-shadow:0 12px 32px #0000003d;z-index:30}
+.cartbar button{background:var(--p);color:#fff;border:0;border-radius:12px;padding:10px 18px;font:inherit;font-weight:700;cursor:pointer}
+.fab{position:fixed;right:16px;bottom:16px;width:56px;height:56px;border-radius:50%;background:#25d366;color:#fff;display:grid;place-items:center;box-shadow:0 10px 26px #25d36666;z-index:25}
+.fab .ic{width:26px;height:26px}@media(min-width:800px){.fab{display:none}}
+footer{margin-top:80px;background:#111;color:#c7c7cc;padding:44px 20px 110px}footer .wrap{display:grid;gap:8px}
+footer b{color:#fff;font-size:1.1rem}footer small{color:#8e8e93}
+dialog{border:0;border-radius:20px;padding:22px;width:min(440px,92vw);max-height:90vh;box-shadow:0 30px 80px #0000004d}dialog::backdrop{background:#0009;backdrop-filter:blur(3px)}
+.lines{margin:0 0 12px;padding:0;list-style:none}.lines li{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #eee}
 .total{font-weight:700;font-size:1.1rem;text-align:right;margin-bottom:12px}
 .qr{width:220px;margin:8px auto;display:block}.qr svg{width:100%;height:auto}
-.paid-note{background:#fff8e1;border-radius:8px;padding:8px;font-size:.85rem;margin-top:10px}
-.x{float:right;background:none;border:0;font-size:1.4rem;cursor:pointer}
-.privacy{color:#777;font-size:.78rem}
-.oerr{color:#b00020;background:#fdecee;border-radius:8px;padding:8px 10px;margin:0;font-size:.9rem}
-footer{text-align:center;padding:24px;color:#777;font-size:.85rem}
-blockquote{margin:0 0 8px;font-size:1rem}figcaption{color:#666;font-size:.88rem}figure{margin:0}.social a{margin-right:12px}
-.st-modern .hero{text-align:left;padding:80px max(20px,calc(50% - 480px)) 64px}.st-modern .prod,.st-modern .card,.st-modern details{border-radius:6px}
-.st-modern h2{letter-spacing:-.02em;font-size:1.6rem}.st-modern .btn{border-radius:8px}
-.st-premium{--serif:Georgia,'Noto Serif','Noto Serif Telugu','Noto Serif Devanagari',serif}.st-premium h1,.st-premium h2,.st-premium .brand{font-family:var(--serif);font-weight:600}
-.st-premium .hero{background:linear-gradient(180deg,#141414,color-mix(in srgb,var(--p) 35%,#141414));padding:96px 18px 84px}.st-premium .hero h1{letter-spacing:.01em}
-.st-premium h2{text-transform:uppercase;letter-spacing:.12em;font-size:1rem;color:#333;border-bottom:1px solid color-mix(in srgb,var(--p) 40%,#fff);padding-bottom:10px}
-.st-premium section{padding:44px 18px}.st-premium .prod,.st-premium .card{border-radius:4px;box-shadow:none;border:1px solid #0000000f}.st-premium .btn{border-radius:2px;letter-spacing:.06em;text-transform:uppercase;font-size:.85rem}
-.st-playful .hero{border-radius:0 0 36px 36px;background:radial-gradient(circle at 20% 20%,color-mix(in srgb,var(--p) 60%,#fff),var(--p))}
-.st-playful .prod,.st-playful .card,.st-playful details{border-radius:22px}.st-playful h2{font-size:1.7rem}.st-playful .btn{box-shadow:0 6px 0 #0002}
+.paid-note{background:#fff8e1;border-radius:10px;padding:10px;font-size:.85rem;margin-top:10px}
+.x{float:right;background:none;border:0;font-size:1.5rem;cursor:pointer}
+.privacy{color:#86868b;font-size:.78rem}
+.oerr{color:#b00020;background:#fdecee;border-radius:10px;padding:8px 10px;margin:0;font-size:.9rem}
+@media(prefers-reduced-motion:no-preference){.hero .wrap>*{animation:up .7s both}.hero .wrap>*:nth-child(2){animation-delay:.08s}.hero .wrap>*:nth-child(3){animation-delay:.16s}.hero .wrap>*:nth-child(4){animation-delay:.24s}}
+@keyframes up{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@media(max-width:600px){.navlink{display:none}.wa span{display:none}.wa{padding:9px}.facts span+span{border-left:0;border-top:1px solid #0000000d}.hero .wrap{padding-bottom:96px}}
+.st-modern .prod,.st-modern .card,.st-modern details,.st-modern .facts{border-radius:10px}.st-modern .btn,.st-modern .pbtn{border-radius:10px}
+.st-modern h2{letter-spacing:-.03em}
+.st-premium{--serif:Georgia,'Noto Serif','Noto Serif Telugu','Noto Serif Devanagari',serif}
+.st-premium h1,.st-premium h2,.st-premium .brand,.st-premium .pb h3,.st-premium .svc h3{font-family:var(--serif);font-weight:600}
+.st-premium .hero{background:linear-gradient(180deg,#141414,color-mix(in srgb,var(--p) 30%,#141414))}
+.st-premium .kicker{letter-spacing:.24em}.st-premium .prod,.st-premium .card,.st-premium .facts{border-radius:6px}
+.st-premium .btn{border-radius:4px;letter-spacing:.06em;text-transform:uppercase;font-size:.84rem}.st-premium .logo{border-radius:50%}
+.st-playful .prod,.st-playful .card,.st-playful details,.st-playful .facts{border-radius:26px}.st-playful .btn{box-shadow:0 6px 0 #0003}
+.st-playful .hero{background:radial-gradient(circle at 20% 15%,color-mix(in srgb,var(--p) 55%,#fff),var(--p) 60%)}
 """
 
 JS = """
@@ -259,6 +324,8 @@ def render_site(site: dict, preview: bool = False, url: str = "", media_base: st
         {"lang_code": "en", "lang_label": "English", "hero_title": site.get("business_name"),
          "hero_subtitle": site.get("tagline"), "about": ""}]
     products = [p for p in as_list(site.get("products")) if isinstance(p, dict) and p.get("id")]
+    pics = [p["image_id"] for p in products if re.fullmatch(r"[a-f0-9]{16}", str(p.get("image_id", "")))]
+    svc_pics = [v for v in as_dict(site.get("service_images")).values() if isinstance(v, str) and re.fullmatch(r"[a-f0-9]{16}", v)]
     c = as_dict(site.get("contact"))
     wa = re.sub(r"\D", "", c.get("whatsapp") or c.get("phone") or "")
     if len(wa) == 10:
@@ -276,18 +343,22 @@ def render_site(site: dict, preview: bool = False, url: str = "", media_base: st
         f'<button data-l="{_e(l.get("lang_code"))}" class="{"" if i else "on"}">{_e(l.get("lang_label"))}</button>'
         for i, l in enumerate(langs)) if len(langs) > 1 else ""
     place = " · ".join(_e(x) for x in (c.get("address"), c.get("city")) if x)
-    hours = f"<p>🕒 {_e(c['hours'])}</p>" if c.get("hours") else ""
+    hours = f"<p>{_ic('clock')}<span>{_e(c['hours'])}</span></p>" if c.get("hours") else ""
     facts = "".join(f"<span>{x}</span>" for x in (
-        f"📍 {_e(c['city'])}" if c.get("city") else "",
-        f"🕒 {_e(c['hours'])}" if c.get("hours") else "",
-        "💳 UPI accepted" if as_dict(site.get("upi")).get("vpa") else "",
-        "💬 Order on WhatsApp" if wa else "",
+        f"{_ic('pin')} {_e(c['city'])}" if c.get("city") else "",
+        f"{_ic('clock')} {_e(c['hours'])}" if c.get("hours") else "",
+        f"{_ic('card')} UPI accepted" if as_dict(site.get("upi")).get("vpa") else "",
+        f"{_ic('chat')} {'Order' if products else 'Book'} on WhatsApp" if wa else "",
     ) if x)
     facts = f'<div class="facts">{facts}</div>' if facts else ""
-    hero_img = next((p["image_id"] for p in products if re.fullmatch(r"[a-f0-9]{16}", str(p.get("image_id", "")))), None)
-    hero_bg = (f".hero{{background:linear-gradient(160deg,color-mix(in srgb,{color} 85%,#000c),#000b),"
+    hero_img = next(iter(pics + svc_pics), None)
+    # Doubled class: a store's own photo beats every style's default hero background.
+    hero_bg = (f"body .hero.hero{{background:linear-gradient(180deg,#0003 0%,#0006 45%,color-mix(in srgb,{color} 55%,#000d) 100%),"
                f"url(/media/{hero_img}.jpg) center/cover}}") if hero_img else ""
-    phone = f'<p>📞 <a href="tel:{_e(c["phone"])}">{_e(c["phone"])}</a></p>' if c.get("phone") else ""
+    phone = f'<p>{_ic("phone")}<a href="tel:{_e(c["phone"])}">{_e(c["phone"])}</a></p>' if c.get("phone") else ""
+    all_pics = pics + svc_pics
+    about_pic = all_pics[1] if len(all_pics) > 1 else (all_pics[0] if all_pics else None)
+    page = {"wa": wa, "place": _e(c.get("city") or c.get("address") or ""), "about_pic": about_pic}
     links = [(n, _social(c.get(k), b)) for n, k, b in (("Instagram", "instagram", "https://instagram.com/"),
                                                        ("Facebook", "facebook", "https://facebook.com/"))]
     social = "".join(f'<a href="{_e(h)}" target="_blank" rel="noopener">{n}</a>' for n, h in links if h)
@@ -317,13 +388,15 @@ def render_site(site: dict, preview: bool = False, url: str = "", media_base: st
 <style>:root{{--p:{color};--bg:{background}}}{CSS}{hero_bg}</style></head><body class="st-{style}">
 {'<div class="preview">👀 Preview — not live yet. Approve it in VaaniLaunch to publish.</div>' if preview else ''}
 {f'<div class="notice">📢 {_e(site["notice"])}</div>' if site.get("notice") else ''}
-<nav><div class="brand"><span class="logo">{_e(name[:1])}</span><span class="bn">{_e(name)}</span></div><div class="langs">{lang_buttons}{f'<a class="wa" href="https://wa.me/{wa}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a>' if wa else ''}</div></nav>
-{''.join(_lang_block(l, i, products, facts, (service_names(site), site.get("service_images"))) for i, l in enumerate(langs))}
-<section id="contact"><h2>Contact</h2>{f'<p>📍 {place}</p>' if place else ''}{phone}{hours}{social}
-<form id="cf"><input name="name" placeholder="Your name" required><input name="email" type="email" placeholder="Email" required>
-<textarea name="message" rows="3" placeholder="Message" required></textarea><button class="pbtn">Send message</button><small id="cs"></small></form></section>
-<footer>{_e(site.get('tagline'))}<br>Launched with 🎙️ VaaniLaunch</footer>
-<div class="cartbar" id="cartbar"><span id="cartsum"></span><button id="cartbtn">Order →</button></div>
+<nav><div class="wrap"><div class="brand"><span class="logo">{_e(name[:1])}</span><span class="bn">{_e(name)}</span></div><div class="navr"><a class="navlink" href="#contact">Contact</a>{f'<div class="langs">{lang_buttons}</div>' if lang_buttons else ''}{f'<a class="wa" href="https://wa.me/{wa}" target="_blank" rel="noopener" aria-label="WhatsApp">{_ic("chat")}<span>WhatsApp</span></a>' if wa else ''}</div></div></nav>
+{''.join(_lang_block(l, i, products, facts, (service_names(site), site.get("service_images")), page) for i, l in enumerate(langs))}
+<section id="contact"><span class="kicker">Visit or message us</span><h2>Contact</h2><div class="contact"><div class="card cinfo">{f'<p>{_ic("pin")}<span>{place}</span></p>' if place else ''}{phone}{hours}{social}
+<div class="cbtns">{f'<a class="cbtn" href="tel:{_e(c["phone"])}">{_ic("phone")} Call</a>' if c.get("phone") else ''}{f'<a class="cbtn green" href="https://wa.me/{wa}" target="_blank" rel="noopener">{_ic("chat")} WhatsApp</a>' if wa else ''}</div></div>
+<form id="cf" class="card"><input name="name" placeholder="Your name" required><input name="email" type="email" placeholder="Email" required>
+<textarea name="message" rows="4" placeholder="Message" required></textarea><button class="pbtn">Send message</button><small id="cs"></small></form></div></section>
+<footer><div class="wrap"><b>{_e(name)}</b><span>{_e(site.get('tagline'))}</span><small>Website made with VaaniLaunch</small></div></footer>
+{f'<a class="fab" href="https://wa.me/{wa}" target="_blank" rel="noopener" aria-label="WhatsApp">{_ic("chat")}</a>' if wa else ''}
+<div class="cartbar" id="cartbar"><span id="cartsum"></span><button id="cartbtn">Checkout →</button></div>
 <dialog id="checkout">
  <div id="step1"><button class="x" aria-label="close">×</button><h2>Your order</h2><ul class="lines" id="lines"></ul><div class="total" id="ctotal"></div>
   <form id="of"><input name="name" placeholder="Your name" required maxlength="100"><input name="phone" type="tel" placeholder="Phone number" required minlength="6" maxlength="20">

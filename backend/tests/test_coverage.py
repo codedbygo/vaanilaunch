@@ -1232,7 +1232,8 @@ def test_services_show_the_same_picture_in_every_language_and_icons_until_then()
     assert service_names({}) == []
     pics = {**_SALON, "service_images": {"haircut (gents)": "0123456789abcdef", "facial": "../../etc/passwd"}}
     page = render_site(pics)
-    assert page.count("/media/0123456789abcdef.jpg") == 2  # Telugu and English cards share it
+    assert page.count("<div class='card svc'><img src=\"/media/0123456789abcdef.jpg\"") == 2  # Telugu and English share it
+    assert "url(/media/0123456789abcdef.jpg)" in page  # and it leads the hero when there are no product photos
     assert "passwd" not in page and "💄" in page  # a bad picture name falls back to the icon
     assert render_site({**_SALON, "service_images": "nope"}).count("<div class=\"ph\" aria-hidden=\"true\">") >= 4
     extra = {**_SALON, "content": [{**_SALON["content"][1], "services": [{"name": "Hair Spa"}, {"name": "Nails"}]},
