@@ -249,5 +249,6 @@
   "edits.heading": "Change the main heading",
   "edits.hours": "Add my opening hours",
   "composer.transcribing": "Turning your voice into text…",
-  "error.voice": "Couldn't turn that into text. Check the box, or speak again: the browser's own voice input is used now."
+  "error.voice": "Couldn't turn that into text. Check the box, or speak again: the browser's own voice input is used now.",
+  "tool.generate_images": "Creating product pictures"
 }

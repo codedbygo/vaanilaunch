@@ -90,8 +90,11 @@ describe("useRecorder", () => {
     expect(bodies[0]?.lang).toBe("te-IN");
     expect(bodies[0]?.audio).toMatch(/^data:audio\/webm;codecs=opus;base64,/);
     expect(mic.track.stop).toHaveBeenCalled(); // the microphone is released
-    expect(result.current.listening).toBe(false);
-    expect(result.current.transcribing).toBe(false);
+    // React applies the state a moment after the text is handed back: wait for it.
+    await waitFor(() => {
+      expect(result.current.listening).toBe(false);
+      expect(result.current.transcribing).toBe(false);
+    });
   });
 
   it("cuts long speech into pieces under the 30-second limit and joins the text in order", async () => {

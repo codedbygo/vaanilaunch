@@ -14,7 +14,8 @@ import httpx
 import anthropic
 from anthropic import AsyncAnthropic
 
-from . import config, db, free_llm, godaddy, security, verify
+from . import config, db, free_llm, godaddy, images, security, verify
+from .site_render import as_list
 
 client = AsyncAnthropic()  # reads ANTHROPIC_API_KEY
 Emit = Callable[[str, object], Awaitable[None]]
@@ -88,6 +89,7 @@ _product = {
         "unit": {"type": "string", "description": "e.g. per kg, per plate, per piece"},
         "category": _text,
         "image_id": {"type": "string", "description": "image_id of the matching uploaded photo, if any"},
+        "icon": {"type": "string", "description": "one emoji that best shows this product, used when there is no photo (e.g. 🥞 for dosa, 🍱 for a meals box, 👗 for a saree)"},
         "available": {"type": "boolean"},
     },
 }
@@ -172,6 +174,8 @@ TOOLS = [
                                     "content": {"type": "array", "items": _lang_block}}},
          },
      }},
+    {"name": "generate_images", "description": "Create pictures for the store's products that have no photo "
+     "(runs in the background; the owner's real photos are never replaced).", "input_schema": _slug_only},
     {"name": "undo_last_change", "description": "Undo the most recent update_site on a store (one step back).",
      "input_schema": _slug_only},
     {"name": "list_orders", "description": "List recent orders for a store the owner manages.", "input_schema": _slug_only},
@@ -191,6 +195,7 @@ LABELS = {
     "get_site": lambda i: "Reading your store",
     "update_site": lambda i: "Updating your live store",
     "undo_last_change": lambda i: "Undoing the last change",
+    "generate_images": lambda i: "Creating product pictures",
     "list_orders": lambda i: "Fetching your orders",
     "update_order": lambda i: f'Marking order {i.get("ref")} as {i.get("status")}',
 }
@@ -220,7 +225,7 @@ def _masked(customer: dict) -> dict:
 # What undo_last_change restores: the owner-editable parts of a store, never status or keys.
 _UNDOABLE = ("business_name", "tagline", "owner_email", "contact", "upi", "theme", "content", "category", "seo",
              "products", "notice")
-_WRITE_TOOLS = {"save_draft", "publish_site", "update_site", "undo_last_change", "update_order"}
+_WRITE_TOOLS = {"save_draft", "publish_site", "update_site", "undo_last_change", "generate_images", "update_order"}
 
 
 def _require_owned(s: Session, slug: str):
@@ -334,6 +339,7 @@ async def _run_tool(name: str, inp: dict, s: Session):
                "_preview": security.preview_token(slug)}
         if site.get("owner_email") and not site.get("owner_email_verified"):
             out["owner_email"] = await verify.request_owner_email(slug, site["owner_email"])
+        images.schedule(slug)  # pictures for products without a photo, in the background
         return out
 
     if name == "publish_site":
@@ -381,7 +387,10 @@ async def _run_tool(name: str, inp: dict, s: Session):
                 for i, p in enumerate(prods):
                     if isinstance(patch, dict) and p["id"] == patch.get("id"):
                         others = {q["id"] for q in prods if q is not p}
-                        prods[i] = _clean_products([{**p, **patch}], taken=others)[0]
+                        merged = {**p, **patch}
+                        if "image_id" in patch:
+                            merged.pop("image_generated", None)  # a real photo replaces the picture
+                        prods[i] = _clean_products([merged], taken=others)[0]
             rm = set(inp.get("remove_product_ids") or [])
             site["products"] = [p for p in prods if p["id"] not in rm]
             for k, v in changes.items():
@@ -393,6 +402,8 @@ async def _run_tool(name: str, inp: dict, s: Session):
         site = db.update_site(slug, mutate)
         if site.get("status") != "live":
             s.approved.discard(slug)  # a changed draft needs the owner's approval again
+        if inp.get("add_products"):
+            images.schedule(slug)
         email_note = {}
         if "owner_email" in changes and site.get("owner_email") and not site.get("owner_email_verified"):
             email_note["owner_email"] = await verify.request_owner_email(slug, site["owner_email"])
@@ -418,6 +429,16 @@ async def _run_tool(name: str, inp: dict, s: Session):
         if site.get("status") != "live":
             s.approved.discard(slug)
         return {"undone": True, "status": site.get("status"), "url": config.site_url(slug)}
+
+    if name == "generate_images":
+        _require_owned(s, slug)
+        missing = sum(1 for p in as_list(db.get_site(slug).get("products"))
+                      if isinstance(p, dict) and p.get("id") and not p.get("image_id"))
+        if not images.available():
+            return {"started": False, "note": "Picture generation isn't set up; products without photos show icons."}
+        images.schedule(slug)
+        return {"started": missing > 0, "products_without_photos": missing,
+                "note": "Pictures appear on the store within a few minutes; refresh the preview to see them."}
 
     if name == "list_orders":
         _require_owned(s, slug)

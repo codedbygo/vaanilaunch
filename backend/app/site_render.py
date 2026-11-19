@@ -46,12 +46,56 @@ def _price(v) -> str:
         return ""
 
 
+# A product without a photo shows an icon instead of a big letter: the one the agent chose, or
+# one matched from the product's name. First match wins, so specific words come before general.
+_ICONS = (
+    (("dosa", "pesarattu", "uttapam", "crepe", "pancake"), "🥞"), (("idli", "idly"), "🍚"),
+    (("biryani", "pulao"), "🍛"), (("pongal", "upma", "khichdi", "porridge", "kheer"), "🍲"),
+    (("poori", "puri", "roti", "chapati", "paratha", "naan", "bread"), "🫓"),
+    (("meals", "thali", "box", "combo", "tiffin"), "🍱"), (("samosa", "momo", "dumpling"), "🥟"),
+    (("vada", "bajji", "pakoda", "snack", "chips", "murukku"), "🥨"), (("pickle", "achar", "chutney"), "🫙"),
+    (("batter", "flour", "masala", "spice", "powder"), "🥣"), (("curry", "dal", "sambar", "gravy"), "🍛"),
+    (("rice",), "🍚"), (("tea", "chai", "coffee"), "☕"), (("juice", "lassi", "shake", "drink"), "🧃"),
+    (("cake", "pastry", "brownie"), "🎂"), (("cookie", "biscuit"), "🍪"),
+    (("laddu", "sweet", "halwa", "jalebi", "barfi", "mithai"), "🍬"), (("ice cream", "kulfi"), "🍨"),
+    (("saree", "sari", "lehenga", "dress", "gown"), "👗"), (("blouse", "kurti", "kurta", "shirt", "top"), "👚"),
+    (("stitching", "tailoring", "alteration"), "🧵"), (("jewel", "necklace", "bangle", "earring"), "💍"),
+    (("makeup", "bridal", "facial", "beauty"), "💄"), (("mehendi", "mehndi", "henna"), "🌿"),
+    (("hair", "haircut", "salon", "spa"), "✂️"), (("tuition", "class", "coaching", "course", "lesson"), "📚"),
+    (("room", "bed", "pg", "hostel", "stay"), "🛏️"), (("clean", "laundry", "wash", "iron"), "🧺"),
+    (("flower", "bouquet", "garland"), "💐"), (("candle", "diya", "decor"), "🕯️"), (("plant",), "🪴"),
+)
+
+
+def _is_icon(v) -> bool:
+    """One emoji (with its joiners and variation marks), never letters or markup."""
+    v = str(v or "")
+    if not 0 < len(v) <= 8 or any(ch.isalnum() or ch.isspace() or not (ord(ch) >= 0x2190 or ch in "\u200d\ufe0f")
+                                  for ch in v):
+        return False
+    # Exactly one picture: joined sequences (👩‍🍳) and skin tones count as one, a row of 🍕🍕 does not.
+    pictures = [ch for ch in v if ch not in "\u200d\ufe0f" and not 0x1F3FB <= ord(ch) <= 0x1F3FF]
+    return len(pictures) - v.count("\u200d") == 1
+
+
+def product_icon(p: dict) -> str:
+    if _is_icon(p.get("icon")):
+        return str(p["icon"])
+    found = re.findall(r"[a-z]+", str(p.get("name") or "").lower())
+    words, text = set(found), " ".join(found)
+    for keys, icon in _ICONS:
+        if any(k in words or (" " in k and k in text) for k in keys):
+            return icon
+    return "🛍️"
+
+
 def _product_card(p: dict, english: bool) -> str:
     primary = p.get("name") if english else (p.get("name_local") or p.get("name"))
     secondary = p.get("name_local") if english else p.get("name")
     desc = p.get("description") if english else (p.get("description_local") or p.get("description"))
-    img = (f'<img src="/media/{_e(p["image_id"])}.jpg" alt="{_e(p.get("name"))}" loading="lazy">'
-           if p.get("image_id") else f'<div class="ph">{_e((primary or "?")[:1])}</div>')
+    ai = '<span class="aibadge">AI image</span>' if p.get("image_generated") and p.get("image_id") else ""
+    img = (f'<div class="pimg"><img src="/media/{_e(p["image_id"])}.jpg" alt="{_e(p.get("name"))}" loading="lazy">{ai}</div>'
+           if p.get("image_id") else f'<div class="ph" aria-hidden="true">{_e(product_icon(p))}</div>')
     unit = f' <small>/ {_e(p["unit"])}</small>' if p.get("unit") else ""
     sold_out = p.get("available") is False
     action = ('<span class="soldout">Sold out</span>' if sold_out else
@@ -103,7 +147,8 @@ section{max-width:1000px;margin:auto;padding:28px 16px}h2{color:var(--p);margin-
 .prods{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}@media(min-width:700px){.prods{grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}}
 .prod{background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px #0000000f;display:flex;flex-direction:column}
 .prod img,.prod .ph{width:100%;aspect-ratio:1/1;object-fit:cover;background:color-mix(in srgb,var(--p) 15%,#fff)}
-.prod .ph{display:grid;place-items:center;font-size:3rem;color:var(--p)}
+.pimg{position:relative}.aibadge{position:absolute;left:8px;bottom:8px;background:#000a;color:#fff;font-size:.68rem;padding:2px 7px;border-radius:999px}
+.prod .ph{display:grid;place-items:center;font-size:4rem;line-height:1;background:radial-gradient(circle at 50% 40%,#fff,color-mix(in srgb,var(--p) 14%,#fff))}
 .pb{padding:12px 14px;display:flex;flex-direction:column;flex:1}.pb h3{margin:0;font-size:1.05rem}.sec{color:#777;font-size:.85rem}
 .pb p{color:#555;font-size:.9rem;margin:6px 0 10px;flex:1}.row{display:flex;justify-content:space-between;align-items:center;gap:6px}.row strong small{display:block;font-weight:500;color:#777;font-size:.75rem}
 .qty{display:flex;align-items:center;gap:8px}.qty button{width:32px;height:32px;border-radius:50%;border:0;background:var(--p);color:#fff;font-size:1.1rem;cursor:pointer}

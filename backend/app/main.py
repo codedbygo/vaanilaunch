@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
-from . import config, db, mail_text, notify, observability, security, speech, verify
+from . import config, db, images, mail_text, notify, observability, security, speech, verify
 from .agent import BudgetExceeded, Session, run_agent
 from .site_render import as_dict, as_list, render_site, store_csp
 
@@ -189,7 +189,10 @@ async def media(name: str):
     path = os.path.join(db.UPLOAD_DIR, name)
     if not os.path.exists(path):
         raise HTTPException(404)
-    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    # Photos are JPEG; generated pictures may be PNG or WebP: serve each with its real type.
+    with open(path, "rb") as f:
+        kind = images.image_type(f.read(16)) or "image/jpeg"
+    return FileResponse(path, media_type=kind, headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
 @app.get("/api/tls-check")

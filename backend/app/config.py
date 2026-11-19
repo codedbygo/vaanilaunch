@@ -50,6 +50,11 @@ SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 SARVAM_STT_MODEL = os.getenv("SARVAM_STT_MODEL", "saaras:v4")
 MAX_TRANSCRIBE_PER_DAY = int(os.getenv("MAX_TRANSCRIBE_PER_DAY", "500"))
 
+# Product pictures for products without a photo (OpenRouter Image API). Empty key = dish icons.
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "recraft/recraft-v4.1-flash-v2:free")
+IMAGE_API_KEY = os.getenv("IMAGE_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
+MAX_IMAGES_PER_DAY = int(os.getenv("MAX_IMAGES_PER_DAY", "60"))
+
 GODADDY_API_KEY = os.getenv("GODADDY_API_KEY", "")
 GODADDY_API_SECRET = os.getenv("GODADDY_API_SECRET", "")
 GODADDY_API_BASE = os.getenv("GODADDY_API_BASE", "https://api.godaddy.com")

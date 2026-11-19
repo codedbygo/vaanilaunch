@@ -1031,3 +1031,188 @@ def test_daily_cap_protects_the_free_credit(monkeypatch):
     monkeypatch.setattr(speech, "_transport", _h.MockTransport(lambda req: _h.Response(200, json={"transcript": "ok"})))
     assert api.post("/api/transcribe", json={"audio": _wav_data_url(), "lang": "en-IN"}).status_code == 200
     assert api.post("/api/transcribe", json={"audio": _wav_data_url(), "lang": "en-IN"}).status_code == 503
+
+
+def test_products_without_photos_show_a_dish_icon_not_a_letter():
+    from app.site_render import product_icon, render_site
+    assert product_icon({"name": "Masala Dosa"}) == "🥞"
+    assert product_icon({"name": "Poori (3 pcs) with Curry"}) == "🫓"  # first match wins
+    assert product_icon({"name": "Meals Box"}) == "🍱"
+    assert product_icon({"name": "Ice cream cup"}) == "🍨"  # two-word names match too
+    assert product_icon({"name": "Bridal makeup"}) == "💄"
+    assert product_icon({"name": "Something unusual"}) == "🛍️"
+    assert product_icon({}) == "🛍️"
+    assert product_icon({"name": "Idli", "icon": "🍕"}) == "🍕"  # the agent's choice wins
+    assert product_icon({"name": "x", "icon": "👩\u200d🍳"}) == "👩\u200d🍳"  # a joined emoji is one icon
+    assert product_icon({"name": "x", "icon": "✂️"}) == "✂️"
+    for bad in ("<b>", "abc", "🍕🍕🍕🍕🍕", "ఇ", " ", "", None):
+        assert product_icon({"name": "Idli", "icon": bad}) == "🍚"
+    page = render_site({"business_name": "Ruchi", "products": [
+        {"id": "p1", "name": "Plain Dosa", "price": 50},
+        {"id": "p2", "name": "Idli", "price": 40, "image_id": "0123456789abcdef"}]})
+    assert '<div class="ph" aria-hidden="true">🥞</div>' in page
+    assert '<div class="ph">P</div>' not in page and "/media/0123456789abcdef.jpg" in page
+
+
+# ---------- Generated product pictures ----------
+_PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+
+
+def _image_ok(monkeypatch, raw=_PNG, status=200, seen=None):
+    import base64 as _b
+    import httpx as _h
+    from app import config, images
+    monkeypatch.setattr(config, "IMAGE_API_KEY", "or-test")
+    monkeypatch.setattr(config, "IMAGE_MODEL", "recraft/recraft-v4.1-flash-v2:free")
+    monkeypatch.setattr(images, "_day", {"date": "", "count": 0})
+
+    def handler(req):
+        if seen is not None:
+            seen.append(json.loads(req.content))
+            seen.append(req.headers["authorization"])
+        return _h.Response(status, json={"data": [{"b64_json": _b.b64encode(raw).decode(), "media_type": "image/png"}]})
+    monkeypatch.setattr(images, "_transport", _h.MockTransport(handler))
+
+
+def test_picture_prompts_describe_the_real_dish():
+    from app import images
+    site = {"category": "restaurant", "contact": {"city": "Ameerpet"}}
+    prompt = images.prompt_for(site, {"name": "Idli (3 pcs)", "description": "Soft idlis with chutney and sambar."})
+    assert "Indian dish: Idli (3 pcs). Soft idlis with chutney and sambar." in prompt
+    assert "Ameerpet" in prompt and "no text" in prompt
+    assert "Indian dish: Plain Dosa." in images.prompt_for({"category": "home_food"}, {"name": "Plain Dosa"})
+    other = images.prompt_for({"category": "boutique"}, {"name": "Silk saree"})
+    assert other.startswith("Realistic product photograph of: Silk saree.")
+
+
+def test_fill_store_adds_pictures_only_where_there_is_no_photo(monkeypatch):
+    import asyncio
+    from app import db, images
+    seen = []
+    _image_ok(monkeypatch, seen=seen)
+    db.save_draft("pic-shop", {"business_name": "Ruchi", "category": "restaurant", "content": [], "contact": {},
+                               "products": [{"id": "p1", "name": "Idli"}, {"id": "p2", "name": "Dosa", "image_id": "0123456789abcdef"},
+                                            "stray", {"name": "no id"}]})
+    assert asyncio.run(images.fill_store("pic-shop")) == 1
+    prods = db.get_site("pic-shop")["products"]
+    p1 = prods[0]
+    assert p1["image_generated"] is True and len(p1["image_id"]) == 16
+    assert prods[1]["image_id"] == "0123456789abcdef" and "image_generated" not in prods[1]
+    assert seen[0] == {"model": "recraft/recraft-v4.1-flash-v2:free", "prompt": images.prompt_for(db.get_site("pic-shop"), {"name": "Idli"}),
+                       "n": 1, "aspect_ratio": "1:1"}
+    assert seen[1] == "Bearer or-test"
+    r = api.get(f"/media/{p1['image_id']}.jpg")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"  # served with its real type
+    assert asyncio.run(images.fill_store("pic-shop")) == 0  # nothing left to fill
+
+
+def test_a_real_photo_added_meanwhile_is_never_replaced(monkeypatch):
+    import asyncio
+    from app import db, images
+    _image_ok(monkeypatch)
+    db.save_draft("race-shop", {"business_name": "R", "content": [], "contact": {}, "products": [{"id": "p1", "name": "Idli"}]})
+    real = images.generate
+
+    async def owner_uploads_first(prompt):
+        raw = await real(prompt)
+        db.update_site("race-shop", lambda s: s["products"][0].update(image_id="fedcba9876543210"))
+        return raw
+    monkeypatch.setattr(images, "generate", owner_uploads_first)
+    asyncio.run(images.fill_store("race-shop"))
+    p = db.get_site("race-shop")["products"][0]
+    assert p["image_id"] == "fedcba9876543210" and "image_generated" not in p
+
+
+def test_picture_generation_stops_quietly_on_any_problem(monkeypatch):
+    import asyncio
+    import httpx as _h
+    from app import config, db, images
+    db.save_draft("fail-shop", {"business_name": "F", "content": [], "contact": {}, "products": [{"id": "p1", "name": "Idli"}]})
+    monkeypatch.setattr(config, "IMAGE_API_KEY", "")
+    assert images.available() is False and asyncio.run(images.fill_store("fail-shop")) == 0
+    for status in (402, 429):
+        _image_ok(monkeypatch, status=status)
+        assert asyncio.run(images.generate("x")) is None
+    _image_ok(monkeypatch, raw=b"not an image")
+    assert asyncio.run(images.generate("x")) is None
+    _image_ok(monkeypatch)
+    monkeypatch.setattr(images, "_transport", _h.MockTransport(lambda req: _h.Response(200, json={"data": []})))
+    assert asyncio.run(images.generate("x")) is None
+    assert asyncio.run(images.fill_store("fail-shop")) == 0
+    assert "image_id" not in db.get_site("fail-shop")["products"][0]
+    images._running.add("fail-shop")
+    assert asyncio.run(images.fill_store("fail-shop")) == 0  # one run per store at a time
+    images._running.discard("fail-shop")
+
+
+def test_picture_daily_cap_and_formats(monkeypatch):
+    import asyncio
+    from app import config, images
+    _image_ok(monkeypatch)
+    monkeypatch.setattr(config, "MAX_IMAGES_PER_DAY", 1)
+    assert asyncio.run(images.generate("a")) == _PNG
+    assert asyncio.run(images.generate("b")) is None
+    assert images.image_type(b"\xff\xd8xx") == "image/jpeg"
+    assert images.image_type(b"RIFF1234WEBPxxxx") == "image/webp"
+    assert images.image_type(b"GIF89a") is None
+
+
+def test_agent_starts_pictures_after_building_and_on_request(monkeypatch):
+    import asyncio
+    from app import agent, config, db, images
+    started = []
+    monkeypatch.setattr(images, "schedule", lambda slug: started.append(slug))
+    db.save_draft("agent-pic", {"business_name": "A", "content": [], "contact": {}, "products": [{"id": "p1", "name": "Idli"}]})
+    s = agent.Session()
+    s.owned.add("agent-pic")
+    monkeypatch.setattr(config, "IMAGE_API_KEY", "")
+    off = asyncio.run(agent._run_tool("generate_images", {"slug": "agent-pic"}, s))
+    assert off["started"] is False and started == []
+    monkeypatch.setattr(config, "IMAGE_API_KEY", "k")
+    on = asyncio.run(agent._run_tool("generate_images", {"slug": "agent-pic"}, s))
+    assert on["started"] is True and on["products_without_photos"] == 1 and started == ["agent-pic"]
+    asyncio.run(agent._run_tool("update_site", {"slug": "agent-pic", "add_products": [{"id": "p2", "name": "Vada", "price": 30}]}, s))
+    assert started == ["agent-pic", "agent-pic"]
+    # A real photo patched onto a pictured product drops the "AI image" mark.
+    db.update_site("agent-pic", lambda x: x["products"][0].update(image_generated=True))
+    monkeypatch.setattr(agent.os.path, "exists", lambda p: True)
+    asyncio.run(agent._run_tool("update_site", {"slug": "agent-pic", "update_products": [{"id": "p1", "image_id": "0123456789abcdef"}]}, s))
+    p1 = db.get_site("agent-pic")["products"][0]
+    assert p1["image_id"] == "0123456789abcdef" and "image_generated" not in p1
+
+
+def test_schedule_runs_in_the_background_only_when_set_up(monkeypatch):
+    import asyncio
+    from app import config, images
+    calls = []
+
+    async def fake_fill(slug):
+        calls.append(slug)
+        return 0
+    monkeypatch.setattr(images, "fill_store", fake_fill)
+    monkeypatch.setattr(config, "IMAGE_API_KEY", "")
+
+    async def go():
+        images.schedule("x")
+        monkeypatch.setattr(config, "IMAGE_API_KEY", "k")
+        images.schedule("y")
+        await asyncio.sleep(0)
+    asyncio.run(go())
+    assert calls == ["y"]
+
+
+def test_store_card_marks_generated_pictures():
+    from app.site_render import render_site
+    page = render_site({"business_name": "R", "products": [
+        {"id": "p1", "name": "Idli", "price": 40, "image_id": "0123456789abcdef", "image_generated": True},
+        {"id": "p2", "name": "Dosa", "price": 50, "image_id": "fedcba9876543210"}]})
+    assert page.count('<span class="aibadge">AI image</span>') == 1
+
+
+def test_picture_prompts_say_how_common_dishes_look():
+    from app import images
+    dosa = images.prompt_for({"category": "restaurant"}, {"name": "Plain Dosa"})
+    assert "very thin, crispy, golden-brown rice crepe" in dosa and "never poured on top" in dosa
+    assert "folded around spiced potato filling" in images.prompt_for({}, {"name": "Masala Dosa"})  # specific first
+    assert "steamed rice cakes" in images.prompt_for({"category": "services"}, {"name": "Idli"})  # a dish is food anywhere
+    assert "It looks like" not in images.prompt_for({"category": "restaurant"}, {"name": "Paneer tikka"})
