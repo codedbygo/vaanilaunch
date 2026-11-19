@@ -1093,14 +1093,15 @@ def test_fill_store_adds_pictures_only_where_there_is_no_photo(monkeypatch):
     db.save_draft("pic-shop", {"business_name": "Ruchi", "category": "restaurant", "content": [], "contact": {},
                                "products": [{"id": "p1", "name": "Idli"}, {"id": "p2", "name": "Dosa", "image_id": "0123456789abcdef"},
                                             "stray", {"name": "no id"}]})
-    assert asyncio.run(images.fill_store("pic-shop")) == 1
+    assert asyncio.run(images.fill_store("pic-shop")) == 2  # the logo, then the product without a photo
+    assert len(db.get_site("pic-shop")["logo_id"]) == 16
     prods = db.get_site("pic-shop")["products"]
     p1 = prods[0]
     assert p1["image_generated"] is True and len(p1["image_id"]) == 16
     assert prods[1]["image_id"] == "0123456789abcdef" and "image_generated" not in prods[1]
-    assert seen[0] == {"model": "recraft/recraft-v4.1-flash-v2:free", "prompt": images.prompt_for(db.get_site("pic-shop"), {"name": "Idli"}),
+    assert seen[2] == {"model": "recraft/recraft-v4.1-flash-v2:free", "prompt": images.prompt_for(db.get_site("pic-shop"), {"name": "Idli"}),
                        "n": 1, "aspect_ratio": "1:1"}
-    assert seen[1] == "Bearer or-test"
+    assert seen[1] == "Bearer or-test" and "logo symbol" in seen[0]["prompt"]
     r = api.get(f"/media/{p1['image_id']}.jpg")
     assert r.status_code == 200 and r.headers["content-type"] == "image/png"  # served with its real type
     assert asyncio.run(images.fill_store("pic-shop")) == 0  # nothing left to fill
@@ -1170,7 +1171,7 @@ def test_agent_starts_pictures_after_building_and_on_request(monkeypatch):
     assert off["started"] is False and started == []
     monkeypatch.setattr(config, "IMAGE_API_KEY", "k")
     on = asyncio.run(agent._run_tool("generate_images", {"slug": "agent-pic"}, s))
-    assert on["started"] is True and on["items_without_photos"] == 1 and started == ["agent-pic"]
+    assert on["started"] is True and on["items_without_photos"] == 2 and started == ["agent-pic"]  # logo + product
     asyncio.run(agent._run_tool("update_site", {"slug": "agent-pic", "add_products": [{"id": "p2", "name": "Vada", "price": 30}]}, s))
     assert started == ["agent-pic", "agent-pic"]
     # A real photo patched onto a pictured product drops the "AI image" mark.
@@ -1248,10 +1249,10 @@ def test_fill_store_pictures_services_once_each(monkeypatch):
     _image_ok(monkeypatch, seen=seen)
     db.save_draft("salon-pic", {k: v for k, v in _SALON.items()})
     assert [n for n, _ in images.missing_services(db.get_site("salon-pic"))] == ["Haircut (Gents)", "Facial"]
-    assert asyncio.run(images.fill_store("salon-pic")) == 2
+    assert asyncio.run(images.fill_store("salon-pic")) == 3  # logo + two services
     pics = db.get_site("salon-pic")["service_images"]
     assert set(pics) == {"haircut (gents)", "facial"}
-    assert "service at a clean, modern Indian beauty salon: Haircut (Gents). Stylish cut." in seen[0]["prompt"]
+    assert "service at a clean, modern Indian beauty salon: Haircut (Gents). Stylish cut." in seen[2]["prompt"]
     assert images.missing_services(db.get_site("salon-pic")) == []
     assert "local business: Repair." in images.service_prompt({}, "Repair", "")
     db.update_site("salon-pic", lambda s: s.update(service_images="broken"))
@@ -1271,3 +1272,38 @@ def test_editing_services_by_voice_starts_their_pictures(monkeypatch):
     asyncio.run(agent._run_tool("update_site", {"slug": "salon-edit", "set": {"content": _SALON["content"]}}, s))
     asyncio.run(agent._run_tool("update_site", {"slug": "salon-edit", "notice": "Closed Monday"}, s))
     assert started == ["salon-edit"]  # text-only edits don't start picture generation
+
+
+def test_logo_prompts_name_a_concrete_symbol_and_never_letters():
+    from app import images
+    salon = images.logo_prompt({"business_name": "Glamora Unisex Salon", "category": "salon", "theme": {"primary_color": "#a3195b"}})
+    assert "salon scissors crossing a flowing strand of hair" in salon and "#a3195b" in salon and "no letters" in salon
+    assert "cosy house" in images.logo_prompt({"business_name": "Sri Lakshmi Ladies PG", "category": "services"})  # name beats category
+    assert "steaming round bowl" in images.logo_prompt({"business_name": "Ruchi Tiffins", "category": "restaurant"})
+    assert "small storefront" in images.logo_prompt({}) and "#e8590c" in images.logo_prompt({})
+    assert images.needs_logo({}) and images.needs_logo({"logo_id": "../x"}) and not images.needs_logo({"logo_id": "0123456789abcdef"})
+
+
+def test_store_shows_its_logo_as_brand_mark_and_favicon():
+    from app.site_render import render_site
+    page = render_site({"business_name": "Glamora", "logo_id": "0123456789abcdef"})
+    assert '<span class="logo logoimg"><img src="/media/0123456789abcdef.jpg" alt=""></span>' in page
+    assert '<link rel="icon" href="/media/0123456789abcdef.jpg">' in page
+    plain = render_site({"business_name": "Glamora", "logo_id": "<script>"})
+    assert '<span class="logo">G</span>' in plain and "<script>" not in plain.split("<style>")[0] and 'rel="icon"' not in plain
+
+
+def test_a_logo_made_meanwhile_is_kept(monkeypatch):
+    import asyncio
+    from app import db, images
+    _image_ok(monkeypatch)
+    db.save_draft("logo-race", {"business_name": "L", "content": [], "contact": {}, "products": []})
+    real = images.generate
+
+    async def owner_has_logo_first(prompt):
+        raw = await real(prompt)
+        db.update_site("logo-race", lambda s: s.update(logo_id="fedcba9876543210"))
+        return raw
+    monkeypatch.setattr(images, "generate", owner_has_logo_first)
+    asyncio.run(images.fill_store("logo-race"))
+    assert db.get_site("logo-race")["logo_id"] == "fedcba9876543210"

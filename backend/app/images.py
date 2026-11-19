@@ -10,6 +10,7 @@ import asyncio
 import base64
 import logging
 import os
+import re
 import secrets
 import time
 
@@ -87,6 +88,40 @@ def service_prompt(site: dict, name: str, desc: str) -> str:
             "professional and respectful, Indian people if anyone appears, no text, no logos, no watermark.")
 
 
+# A logo needs a concrete symbol: left abstract, image models draw shapes that read as wrong letters.
+_SYMBOL_BY_WORD = (
+    (("pg", "hostel", "stay", "rooms", "home stay"), "a cosy house with a glowing window and a crescent moon"),
+    (("cake", "bakery", "bake", "cookie", "dessert"), "a cupcake with a swirl of frosting and a cherry"),
+    (("tailor", "stitch", "blouse", "boutique", "saree", "dress"), "a needle and thread forming a graceful loop"),
+    (("jewel", "gold", "silver"), "a sparkling diamond ring"), (("flower", "florist"), "a blooming lotus flower"),
+    (("pickle", "achar", "spice", "masala"), "a clay pickle jar with a chilli and a leaf"),
+    (("tea", "chai", "coffee"), "a steaming cup of chai"), (("tuition", "coaching", "class", "academy"), "an open book with a rising star"),
+)
+_SYMBOL_BY_CATEGORY = {
+    "restaurant": "a steaming round bowl of food on a banana leaf, with a rising wisp of steam",
+    "home_food": "a steaming round bowl of food on a banana leaf, with a rising wisp of steam",
+    "salon": "an elegant pair of salon scissors crossing a flowing strand of hair",
+    "boutique": "a graceful dress form with a draped fabric swirl",
+    "coaching": "an open book with a rising star", "clinic": "a gentle heart with a medical cross",
+    "retail": "a stylish shopping bag with a small sparkle", "services": "a friendly house with a wrench",
+}
+
+
+def logo_prompt(site: dict) -> str:
+    name = str(site.get("business_name") or "the business")
+    words = set(re.findall(r"[a-z]+", name.lower()))
+    symbol = next((sym for keys, sym in _SYMBOL_BY_WORD if words & set(keys)), None) or _SYMBOL_BY_CATEGORY.get(
+        str(site.get("category")), "a simple, friendly symbol of a local shop: a small storefront with an awning")
+    color = as_dict(site.get("theme")).get("primary_color") or "#e8590c"
+    return (f"Premium app-icon style logo symbol for a business called '{name}': {symbol}. Flat vector "
+            f"illustration, simple bold shapes, one centred symbol, brand colour {color} with soft tonal shading, "
+            "on a plain white background, generous padding. Absolutely no letters, no words, no text, no initials.")
+
+
+def needs_logo(site: dict) -> bool:
+    return not re.fullmatch(r"[a-f0-9]{16}", str(site.get("logo_id") or ""))
+
+
 def _count_today() -> bool:
     today = time.strftime("%Y-%m-%d")
     if _day["date"] != today:
@@ -135,6 +170,8 @@ async def fill_store(slug: str) -> int:
     try:
         site = db.get_site(slug) or {}
         jobs = []
+        if needs_logo(site):
+            jobs.append((logo_prompt(site), lambda s: lambda iid: s.update(logo_id=iid) if needs_logo(s) else None))
         for p in missing_products(site):
             def attach(s, pid=p["id"]):
                 def put(iid):

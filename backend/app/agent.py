@@ -174,7 +174,7 @@ TOOLS = [
                                     "content": {"type": "array", "items": _lang_block}}},
          },
      }},
-    {"name": "generate_images", "description": "Create pictures for the store's products and services that have no photo "
+    {"name": "generate_images", "description": "Create the store's logo and pictures for products and services that have no photo "
      "(runs in the background; the owner's real photos are never replaced).", "input_schema": _slug_only},
     {"name": "undo_last_change", "description": "Undo the most recent update_site on a store (one step back).",
      "input_schema": _slug_only},
@@ -433,7 +433,8 @@ async def _run_tool(name: str, inp: dict, s: Session):
     if name == "generate_images":
         _require_owned(s, slug)
         site_now = db.get_site(slug)
-        missing = len(images.missing_products(site_now)) + len(images.missing_services(site_now))
+        missing = (len(images.missing_products(site_now)) + len(images.missing_services(site_now))
+                   + images.needs_logo(site_now))
         if not images.available():
             return {"started": False, "note": "Picture generation isn't set up; products without photos show icons."}
         images.schedule(slug)

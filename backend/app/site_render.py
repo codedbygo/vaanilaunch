@@ -181,7 +181,9 @@ img{max-width:100%}a{color:inherit}
 nav{position:sticky;top:0;z-index:20;background:color-mix(in srgb,#fff 86%,transparent);backdrop-filter:saturate(1.6) blur(14px);-webkit-backdrop-filter:saturate(1.6) blur(14px);border-bottom:1px solid #0000000d}
 nav .wrap{display:flex;justify-content:space-between;align-items:center;gap:10px;height:64px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:1.08rem;letter-spacing:-.01em;min-width:0}
-.logo{width:38px;height:38px;border-radius:12px;background:var(--p);color:#fff;display:grid;place-items:center;font-size:1.1rem;flex:none}
+.logo{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,color-mix(in srgb,var(--p) 70%,#fff),var(--p) 55%,color-mix(in srgb,var(--p) 70%,#000));color:#fff;display:grid;place-items:center;font-family:Georgia,'Noto Serif',serif;font-size:1.25rem;font-weight:600;flex:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--p) 18%,transparent),0 4px 12px color-mix(in srgb,var(--p) 30%,transparent)}
+.logoimg{width:44px;height:44px;background:#fff;overflow:hidden;box-shadow:0 0 0 1px #0000000f,0 4px 12px #00000014}
+.logoimg img{width:100%;height:100%;object-fit:cover;transform:scale(1.6)}
 .bn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .navr{display:flex;align-items:center;gap:8px}
 .navlink{font-size:.92rem;text-decoration:none;opacity:.75;padding:6px 8px}.navlink:hover{opacity:1}
@@ -358,6 +360,9 @@ def render_site(site: dict, preview: bool = False, url: str = "", media_base: st
     phone = f'<p>{_ic("phone")}<a href="tel:{_e(c["phone"])}">{_e(c["phone"])}</a></p>' if c.get("phone") else ""
     all_pics = pics + svc_pics
     about_pic = all_pics[1] if len(all_pics) > 1 else (all_pics[0] if all_pics else None)
+    logo_id = str(site.get("logo_id") or "")
+    logo = (f'<span class="logo logoimg"><img src="/media/{logo_id}.jpg" alt=""></span>' if re.fullmatch(r"[a-f0-9]{16}", logo_id)
+            else f'<span class="logo">{_e(name[:1])}</span>')
     page = {"wa": wa, "place": _e(c.get("city") or c.get("address") or ""), "about_pic": about_pic}
     links = [(n, _social(c.get(k), b)) for n, k, b in (("Instagram", "instagram", "https://instagram.com/"),
                                                        ("Facebook", "facebook", "https://facebook.com/"))]
@@ -384,11 +389,12 @@ def render_site(site: dict, preview: bool = False, url: str = "", media_base: st
 <meta property="og:type" content="website"><meta property="og:title" content="{_e(title)}"><meta property="og:description" content="{_e(description)}">
 {f'<meta property="og:url" content="{_e(url)}">' if url else ''}{f'<meta property="og:image" content="{_e(image)}"><meta name="twitter:card" content="summary_large_image">' if image else ''}
 <meta name="theme-color" content="{color}">
+{f'<link rel="icon" href="/media/{logo_id}.jpg">' if re.fullmatch(r"[a-f0-9]{16}", logo_id) else ''}
 <script type="application/ld+json">{ld}</script>
 <style>:root{{--p:{color};--bg:{background}}}{CSS}{hero_bg}</style></head><body class="st-{style}">
 {'<div class="preview">👀 Preview — not live yet. Approve it in VaaniLaunch to publish.</div>' if preview else ''}
 {f'<div class="notice">📢 {_e(site["notice"])}</div>' if site.get("notice") else ''}
-<nav><div class="wrap"><div class="brand"><span class="logo">{_e(name[:1])}</span><span class="bn">{_e(name)}</span></div><div class="navr"><a class="navlink" href="#contact">Contact</a>{f'<div class="langs">{lang_buttons}</div>' if lang_buttons else ''}{f'<a class="wa" href="https://wa.me/{wa}" target="_blank" rel="noopener" aria-label="WhatsApp">{_ic("chat")}<span>WhatsApp</span></a>' if wa else ''}</div></div></nav>
+<nav><div class="wrap"><div class="brand">{logo}<span class="bn">{_e(name)}</span></div><div class="navr"><a class="navlink" href="#contact">Contact</a>{f'<div class="langs">{lang_buttons}</div>' if lang_buttons else ''}{f'<a class="wa" href="https://wa.me/{wa}" target="_blank" rel="noopener" aria-label="WhatsApp">{_ic("chat")}<span>WhatsApp</span></a>' if wa else ''}</div></div></nav>
 {''.join(_lang_block(l, i, products, facts, (service_names(site), site.get("service_images")), page) for i, l in enumerate(langs))}
 <section id="contact"><span class="kicker">Visit or message us</span><h2>Contact</h2><div class="contact"><div class="card cinfo">{f'<p>{_ic("pin")}<span>{place}</span></p>' if place else ''}{phone}{hours}{social}
 <div class="cbtns">{f'<a class="cbtn" href="tel:{_e(c["phone"])}">{_ic("phone")} Call</a>' if c.get("phone") else ''}{f'<a class="cbtn green" href="https://wa.me/{wa}" target="_blank" rel="noopener">{_ic("chat")} WhatsApp</a>' if wa else ''}</div></div>
