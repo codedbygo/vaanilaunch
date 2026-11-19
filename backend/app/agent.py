@@ -174,7 +174,7 @@ TOOLS = [
                                     "content": {"type": "array", "items": _lang_block}}},
          },
      }},
-    {"name": "generate_images", "description": "Create pictures for the store's products that have no photo "
+    {"name": "generate_images", "description": "Create pictures for the store's products and services that have no photo "
      "(runs in the background; the owner's real photos are never replaced).", "input_schema": _slug_only},
     {"name": "undo_last_change", "description": "Undo the most recent update_site on a store (one step back).",
      "input_schema": _slug_only},
@@ -402,7 +402,7 @@ async def _run_tool(name: str, inp: dict, s: Session):
         site = db.update_site(slug, mutate)
         if site.get("status") != "live":
             s.approved.discard(slug)  # a changed draft needs the owner's approval again
-        if inp.get("add_products"):
+        if inp.get("add_products") or "content" in changes:  # new products or services get pictures
             images.schedule(slug)
         email_note = {}
         if "owner_email" in changes and site.get("owner_email") and not site.get("owner_email_verified"):
@@ -432,12 +432,12 @@ async def _run_tool(name: str, inp: dict, s: Session):
 
     if name == "generate_images":
         _require_owned(s, slug)
-        missing = sum(1 for p in as_list(db.get_site(slug).get("products"))
-                      if isinstance(p, dict) and p.get("id") and not p.get("image_id"))
+        site_now = db.get_site(slug)
+        missing = len(images.missing_products(site_now)) + len(images.missing_services(site_now))
         if not images.available():
             return {"started": False, "note": "Picture generation isn't set up; products without photos show icons."}
         images.schedule(slug)
-        return {"started": missing > 0, "products_without_photos": missing,
+        return {"started": missing > 0, "items_without_photos": missing,
                 "note": "Pictures appear on the store within a few minutes; refresh the preview to see them."}
 
     if name == "list_orders":

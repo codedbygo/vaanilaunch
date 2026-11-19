@@ -16,7 +16,7 @@ import time
 import httpx
 
 from . import config, db
-from .site_render import as_dict, as_list
+from .site_render import as_dict, as_list, service_key, service_names
 
 log = logging.getLogger("vaanilaunch")
 
@@ -75,6 +75,18 @@ def prompt_for(site: dict, p: dict) -> str:
             "centred, no text, no logos, no people.")
 
 
+_PLACE = {"salon": "beauty salon", "coaching": "coaching class", "clinic": "clinic",
+          "boutique": "tailoring boutique", "services": "local service business"}
+
+
+def service_prompt(site: dict, name: str, desc: str) -> str:
+    """A service is shown being done: a haircut, a facial, mehendi on hands."""
+    where = _PLACE.get(str(site.get("category")), "local business")
+    detail = f"{name}. {desc}" if desc else name
+    return (f"Realistic photograph of this service at a clean, modern Indian {where}: {detail}. Natural light, "
+            "professional and respectful, Indian people if anyone appears, no text, no logos, no watermark.")
+
+
 def _count_today() -> bool:
     today = time.strftime("%Y-%m-%d")
     if _day["date"] != today:
@@ -122,26 +134,56 @@ async def fill_store(slug: str) -> int:
     added = 0
     try:
         site = db.get_site(slug) or {}
-        todo = [p for p in as_list(site.get("products")) if isinstance(p, dict) and p.get("id")
-                and not p.get("image_id")][:MAX_PER_RUN]
-        for p in todo:
-            raw = await generate(prompt_for(site, p))
+        jobs = []
+        for p in missing_products(site):
+            def attach(s, pid=p["id"]):
+                def put(iid):
+                    for q in as_list(s.get("products")):
+                        # The owner may have added a real photo meanwhile: never replace it.
+                        if isinstance(q, dict) and q.get("id") == pid and not q.get("image_id"):
+                            q["image_id"], q["image_generated"] = iid, True
+                return put
+            jobs.append((prompt_for(site, p), attach))
+        for name, desc in missing_services(site):
+            def attach_svc(s, key=service_key(name)):
+                def put(iid):
+                    pics = s.get("service_images") if isinstance(s.get("service_images"), dict) else {}
+                    pics.setdefault(key, iid)
+                    s["service_images"] = pics
+                return put
+            jobs.append((service_prompt(site, name, desc), attach_svc))
+        for prompt, attach in jobs[:MAX_PER_RUN]:
+            raw = await generate(prompt)
             if raw is None:
                 break  # no key, limit or outage: the rest keep their icons
             iid = secrets.token_hex(8)
             with open(os.path.join(db.UPLOAD_DIR, f"{iid}.jpg"), "wb") as f:
                 f.write(raw)
-
-            def attach(s, pid=p["id"], iid=iid):
-                for q in as_list(s.get("products")):
-                    # The owner may have added a real photo meanwhile: never replace it.
-                    if isinstance(q, dict) and q.get("id") == pid and not q.get("image_id"):
-                        q["image_id"], q["image_generated"] = iid, True
-            db.update_site(slug, attach)
+            db.update_site(slug, lambda s, a=attach, i=iid: a(s)(i))
             added += 1
     finally:
         _running.discard(slug)
     return added
+
+
+def missing_products(site: dict) -> list[dict]:
+    return [p for p in as_list(site.get("products")) if isinstance(p, dict) and p.get("id") and not p.get("image_id")]
+
+
+def missing_services(site: dict) -> list[tuple[str, str]]:
+    """(name, description) of services without a picture, from the English block (else the first)."""
+    pics = site.get("service_images") if isinstance(site.get("service_images"), dict) else {}
+    langs = [b for b in as_list(site.get("content")) if isinstance(b, dict)]
+    ref = next((b for b in langs if str(b.get("lang_code", "")).lower().startswith("en")), langs[0] if langs else {})
+    descs = {service_key(str(s.get("name") or "")): str(s.get("description") or "")
+             for s in as_list(ref.get("services")) if isinstance(s, dict)}
+    seen, out = set(), []
+    for name in service_names(site):
+        key = service_key(name)
+        if name and key not in pics and key not in seen:
+            seen.add(key)
+            out.append((name, descs.get(key, "")))
+    return out
 
 
 def schedule(slug: str) -> None:

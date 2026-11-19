@@ -105,14 +105,33 @@ def _product_card(p: dict, english: bool) -> str:
             f'<p>{_e(desc)}</p><div class="row"><strong>{_price(p.get("price"))}{unit}</strong>{action}</div></div></article>')
 
 
-def _lang_block(l: dict, i: int, products: list, facts: str = "") -> str:
+def service_names(site: dict) -> list[str]:
+    """Service names from the English block (else the first): pictures are keyed by these, so every
+    language version of a service shows the same picture."""
+    langs = [b for b in as_list(site.get("content")) if isinstance(b, dict)]
+    ref = next((b for b in langs if str(b.get("lang_code", "")).lower().startswith("en")), langs[0] if langs else {})
+    return [str(s.get("name") or "").strip() for s in as_list(ref.get("services")) if isinstance(s, dict)]
+
+
+def service_key(name: str) -> str:
+    return " ".join(name.lower().split())
+
+
+def _lang_block(l: dict, i: int, products: list, facts: str = "", svc: tuple = ((), {})) -> str:
     english = str(l.get("lang_code", "")).lower().startswith("en")
     prods = "".join(_product_card(p, english) for p in products)
-    def service(s: dict) -> str:
-        price = f"<strong>{_e(s.get('price'))}</strong>" if s.get("price") else ""
-        return f"<div class=card><h3>{_e(s.get('name'))}</h3><p>{_e(s.get('description'))}</p>{price}</div>"
+    names, pics = svc
 
-    services = "".join(service(s) for s in as_list(l.get("services")) if isinstance(s, dict))
+    def service(n: int, s: dict) -> str:
+        price = f"<strong>{_e(s.get('price'))}</strong>" if s.get("price") else ""
+        ref = names[n] if n < len(names) else str(s.get("name") or "")
+        pic = pics.get(service_key(ref)) if isinstance(pics, dict) else None
+        top = (f'<img src="/media/{_e(pic)}.jpg" alt="{_e(s.get("name"))}" loading="lazy">'
+               if isinstance(pic, str) and re.fullmatch(r"[a-f0-9]{16}", pic)
+               else f'<div class="ph" aria-hidden="true">{_e(product_icon({"name": ref}))}</div>')
+        return f"<div class='card svc'>{top}<h3>{_e(s.get('name'))}</h3><p>{_e(s.get('description'))}</p>{price}</div>"
+
+    services = "".join(service(n, s) for n, s in enumerate(x for x in as_list(l.get("services")) if isinstance(x, dict)))
     faqs = "".join(f"<details><summary>{_e(f.get('q'))}</summary><p>{_e(f.get('a'))}</p></details>"
                    for f in as_list(l.get("faqs")) if isinstance(f, dict))
     quotes = "".join(f"<figure class=card><blockquote>“{_e(t.get('text'))}”</blockquote><figcaption>{_e(t.get('name'))}</figcaption></figure>"
@@ -146,6 +165,8 @@ section{max-width:1000px;margin:auto;padding:28px 16px}h2{color:var(--p);margin-
 .prods{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}@media(min-width:700px){.prods{grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}}
 .prod{background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px #0000000f;display:flex;flex-direction:column}
 .prod img,.prod .ph{width:100%;aspect-ratio:1/1;object-fit:cover;background:color-mix(in srgb,var(--p) 15%,#fff)}
+.svc img,.svc .ph{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:10px;margin-bottom:10px;display:block}
+.svc .ph{display:grid;place-items:center;font-size:3.2rem;line-height:1;background:radial-gradient(circle at 50% 40%,#fff,color-mix(in srgb,var(--p) 14%,#fff))}
 .prod .ph{display:grid;place-items:center;font-size:4rem;line-height:1;background:radial-gradient(circle at 50% 40%,#fff,color-mix(in srgb,var(--p) 14%,#fff))}
 .pb{padding:12px 14px;display:flex;flex-direction:column;flex:1}.pb h3{margin:0;font-size:1.05rem}.sec{color:#777;font-size:.85rem}
 .pb p{color:#555;font-size:.9rem;margin:6px 0 10px;flex:1}.row{display:flex;justify-content:space-between;align-items:center;gap:6px}.row strong small{display:block;font-weight:500;color:#777;font-size:.75rem}
@@ -297,7 +318,7 @@ def render_site(site: dict, preview: bool = False, url: str = "", media_base: st
 {'<div class="preview">👀 Preview — not live yet. Approve it in VaaniLaunch to publish.</div>' if preview else ''}
 {f'<div class="notice">📢 {_e(site["notice"])}</div>' if site.get("notice") else ''}
 <nav><div class="brand"><span class="logo">{_e(name[:1])}</span><span class="bn">{_e(name)}</span></div><div class="langs">{lang_buttons}{f'<a class="wa" href="https://wa.me/{wa}" target="_blank" rel="noopener" aria-label="WhatsApp">💬</a>' if wa else ''}</div></nav>
-{''.join(_lang_block(l, i, products, facts) for i, l in enumerate(langs))}
+{''.join(_lang_block(l, i, products, facts, (service_names(site), site.get("service_images"))) for i, l in enumerate(langs))}
 <section id="contact"><h2>Contact</h2>{f'<p>📍 {place}</p>' if place else ''}{phone}{hours}{social}
 <form id="cf"><input name="name" placeholder="Your name" required><input name="email" type="email" placeholder="Email" required>
 <textarea name="message" rows="3" placeholder="Message" required></textarea><button class="pbtn">Send message</button><small id="cs"></small></form></section>

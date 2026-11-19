@@ -1170,7 +1170,7 @@ def test_agent_starts_pictures_after_building_and_on_request(monkeypatch):
     assert off["started"] is False and started == []
     monkeypatch.setattr(config, "IMAGE_API_KEY", "k")
     on = asyncio.run(agent._run_tool("generate_images", {"slug": "agent-pic"}, s))
-    assert on["started"] is True and on["products_without_photos"] == 1 and started == ["agent-pic"]
+    assert on["started"] is True and on["items_without_photos"] == 1 and started == ["agent-pic"]
     asyncio.run(agent._run_tool("update_site", {"slug": "agent-pic", "add_products": [{"id": "p2", "name": "Vada", "price": 30}]}, s))
     assert started == ["agent-pic", "agent-pic"]
     # A real photo patched onto a pictured product drops the "AI image" mark.
@@ -1215,3 +1215,58 @@ def test_picture_prompts_say_how_common_dishes_look():
     assert "folded around spiced potato filling" in images.prompt_for({}, {"name": "Masala Dosa"})  # specific first
     assert "steamed rice cakes" in images.prompt_for({"category": "services"}, {"name": "Idli"})  # a dish is food anywhere
     assert "It looks like" not in images.prompt_for({"category": "restaurant"}, {"name": "Paneer tikka"})
+
+
+_SALON = {"business_name": "Glamora", "category": "salon", "contact": {}, "content": [
+    {"lang_code": "te", "lang_label": "తెలుగు", "hero_title": "గ్లామోరా", "hero_subtitle": "s", "about": "a",
+     "services": [{"name": "హెయిర్‌కట్", "description": "స్టైలిష్", "price": "₹150"}, {"name": "ఫేషియల్", "price": "₹600"}]},
+    {"lang_code": "en", "lang_label": "English", "hero_title": "Glamora", "hero_subtitle": "s", "about": "a",
+     "services": [{"name": "Haircut (Gents)", "description": "Stylish cut", "price": "₹150"},
+                  {"name": "Facial", "price": "From ₹600"}, {"name": "Facial"}, "stray"]}]}
+
+
+def test_services_show_the_same_picture_in_every_language_and_icons_until_then():
+    from app.site_render import render_site, service_names
+    assert service_names(_SALON) == ["Haircut (Gents)", "Facial", "Facial"]
+    assert service_names({"content": [{"services": [{"name": " Spa "}]}]}) == ["Spa"]  # no English: first block
+    assert service_names({}) == []
+    pics = {**_SALON, "service_images": {"haircut (gents)": "0123456789abcdef", "facial": "../../etc/passwd"}}
+    page = render_site(pics)
+    assert page.count("/media/0123456789abcdef.jpg") == 2  # Telugu and English cards share it
+    assert "passwd" not in page and "💄" in page  # a bad picture name falls back to the icon
+    assert render_site({**_SALON, "service_images": "nope"}).count("<div class=\"ph\" aria-hidden=\"true\">") >= 4
+    extra = {**_SALON, "content": [{**_SALON["content"][1], "services": [{"name": "Hair Spa"}, {"name": "Nails"}]},
+                                   {**_SALON["content"][0], "services": [{"name": "A"}, {"name": "B"}, {"name": "C"}]}]}
+    assert "C</h3>" in render_site(extra)  # a block with more services than English still renders
+
+
+def test_fill_store_pictures_services_once_each(monkeypatch):
+    import asyncio
+    from app import db, images
+    seen = []
+    _image_ok(monkeypatch, seen=seen)
+    db.save_draft("salon-pic", {k: v for k, v in _SALON.items()})
+    assert [n for n, _ in images.missing_services(db.get_site("salon-pic"))] == ["Haircut (Gents)", "Facial"]
+    assert asyncio.run(images.fill_store("salon-pic")) == 2
+    pics = db.get_site("salon-pic")["service_images"]
+    assert set(pics) == {"haircut (gents)", "facial"}
+    assert "service at a clean, modern Indian beauty salon: Haircut (Gents). Stylish cut." in seen[0]["prompt"]
+    assert images.missing_services(db.get_site("salon-pic")) == []
+    assert "local business: Repair." in images.service_prompt({}, "Repair", "")
+    db.update_site("salon-pic", lambda s: s.update(service_images="broken"))
+    assert len(images.missing_services(db.get_site("salon-pic"))) == 2
+    assert asyncio.run(images.fill_store("salon-pic")) == 2  # a damaged map is rebuilt
+    assert isinstance(db.get_site("salon-pic")["service_images"], dict)
+
+
+def test_editing_services_by_voice_starts_their_pictures(monkeypatch):
+    import asyncio
+    from app import agent, db, images
+    started = []
+    monkeypatch.setattr(images, "schedule", lambda slug: started.append(slug))
+    db.save_draft("salon-edit", {k: v for k, v in _SALON.items()})
+    s = agent.Session()
+    s.owned.add("salon-edit")
+    asyncio.run(agent._run_tool("update_site", {"slug": "salon-edit", "set": {"content": _SALON["content"]}}, s))
+    asyncio.run(agent._run_tool("update_site", {"slug": "salon-edit", "notice": "Closed Monday"}, s))
+    assert started == ["salon-edit"]  # text-only edits don't start picture generation
