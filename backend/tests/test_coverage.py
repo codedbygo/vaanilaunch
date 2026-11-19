@@ -1201,12 +1201,11 @@ def test_schedule_runs_in_the_background_only_when_set_up(monkeypatch):
     assert calls == ["y"]
 
 
-def test_store_card_marks_generated_pictures():
+def test_generated_pictures_show_like_any_photo():
     from app.site_render import render_site
     page = render_site({"business_name": "R", "products": [
-        {"id": "p1", "name": "Idli", "price": 40, "image_id": "0123456789abcdef", "image_generated": True},
-        {"id": "p2", "name": "Dosa", "price": 50, "image_id": "fedcba9876543210"}]})
-    assert page.count('<span class="aibadge">AI image</span>') == 1
+        {"id": "p1", "name": "Idli", "price": 40, "image_id": "0123456789abcdef", "image_generated": True}]})
+    assert '<img src="/media/0123456789abcdef.jpg" alt="Idli" loading="lazy">' in page and "AI image" not in page
 
 
 def test_picture_prompts_say_how_common_dishes_look():

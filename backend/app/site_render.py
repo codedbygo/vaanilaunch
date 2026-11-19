@@ -93,8 +93,7 @@ def _product_card(p: dict, english: bool) -> str:
     primary = p.get("name") if english else (p.get("name_local") or p.get("name"))
     secondary = p.get("name_local") if english else p.get("name")
     desc = p.get("description") if english else (p.get("description_local") or p.get("description"))
-    ai = '<span class="aibadge">AI image</span>' if p.get("image_generated") and p.get("image_id") else ""
-    img = (f'<div class="pimg"><img src="/media/{_e(p["image_id"])}.jpg" alt="{_e(p.get("name"))}" loading="lazy">{ai}</div>'
+    img = (f'<img src="/media/{_e(p["image_id"])}.jpg" alt="{_e(p.get("name"))}" loading="lazy">'
            if p.get("image_id") else f'<div class="ph" aria-hidden="true">{_e(product_icon(p))}</div>')
     unit = f' <small>/ {_e(p["unit"])}</small>' if p.get("unit") else ""
     sold_out = p.get("available") is False
@@ -147,7 +146,6 @@ section{max-width:1000px;margin:auto;padding:28px 16px}h2{color:var(--p);margin-
 .prods{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}@media(min-width:700px){.prods{grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}}
 .prod{background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px #0000000f;display:flex;flex-direction:column}
 .prod img,.prod .ph{width:100%;aspect-ratio:1/1;object-fit:cover;background:color-mix(in srgb,var(--p) 15%,#fff)}
-.pimg{position:relative}.aibadge{position:absolute;left:8px;bottom:8px;background:#000a;color:#fff;font-size:.68rem;padding:2px 7px;border-radius:999px}
 .prod .ph{display:grid;place-items:center;font-size:4rem;line-height:1;background:radial-gradient(circle at 50% 40%,#fff,color-mix(in srgb,var(--p) 14%,#fff))}
 .pb{padding:12px 14px;display:flex;flex-direction:column;flex:1}.pb h3{margin:0;font-size:1.05rem}.sec{color:#777;font-size:.85rem}
 .pb p{color:#555;font-size:.9rem;margin:6px 0 10px;flex:1}.row{display:flex;justify-content:space-between;align-items:center;gap:6px}.row strong small{display:block;font-weight:500;color:#777;font-size:.75rem}
