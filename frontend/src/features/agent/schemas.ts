@@ -66,6 +66,10 @@ export const checkDomainsResultSchema = z.object({ results: z.array(domainSchema
 export const slugResultSchema = z.object({ slug: z.string() });
 
 export const uploadResultSchema = z.object({ id: z.string(), url: z.string() });
+
+// Server speech-to-text: whether it is switched on, and the text of one clip.
+export const voiceConfigSchema = z.object({ server: z.boolean() });
+export const transcribeResultSchema = z.object({ text: z.string() });
 export type UploadResult = z.infer<typeof uploadResultSchema>;
 
 export const approveResultSchema = z.object({ approved: z.literal(true) });

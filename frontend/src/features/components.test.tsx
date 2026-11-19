@@ -33,6 +33,7 @@ function fakeSession(over: Partial<LaunchSession> = {}): LaunchSession {
     note: vi.fn(),
     setCelebrate: vi.fn(),
     failed: false,
+    serverVoice: false,
     retry: vi.fn(() => Promise.resolve()),
     ...over,
   };
@@ -359,5 +360,85 @@ describe("launch checklist", () => {
     expect(card).toHaveTextContent("100%");
     expect(card).not.toHaveTextContent(/Tell the agent/);
     expect(screen.queryByRole("link", { name: /Download QR code/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("Composer with server speech-to-text", () => {
+  function installServerMic() {
+    const track = { stop: vi.fn() };
+    class FakeMediaRecorder {
+      static isTypeSupported = () => true;
+      mimeType = "audio/webm;codecs=opus";
+      ondataavailable: ((e: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      start() {
+        return undefined;
+      }
+      stop() {
+        this.ondataavailable?.({ data: new Blob([new Uint8Array(4000)], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
+    Object.defineProperty(navigator, "mediaDevices", {
+      value: { getUserMedia: () => Promise.resolve({ getTracks: () => [track] }) },
+      configurable: true,
+    });
+  }
+
+  it("shows the words from the server for checking, then falls back to the browser after a failure", async () => {
+    installServerMic();
+    let release: () => void = () => undefined;
+    let n = 0;
+    server.use(
+      http.post("*/api/transcribe", async () => {
+        n++;
+        if (n === 1) {
+          await new Promise<void>((r) => (release = r));
+          return HttpResponse.json({ text: "women's PG in Ameerpet" });
+        }
+        return HttpResponse.json({ detail: "down" }, { status: 503 });
+      }),
+    );
+    const session = fakeSession({ serverVoice: true });
+    render(<Composer session={session} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /speak in/i }));
+    await user.click(await screen.findByRole("button", { name: "Stop listening" }));
+    expect(await screen.findByText("Turning your voice into text…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /speak in/i })).toBeDisabled();
+    release();
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
+        "women's PG in Ameerpet",
+      );
+    });
+    expect(session.send).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /speak in/i }));
+    await user.click(await screen.findByRole("button", { name: "Stop listening" }));
+    await waitFor(() => {
+      expect(session.note).toHaveBeenCalledWith(
+        expect.stringMatching(/Couldn't turn that into text/),
+      );
+    });
+    // The browser recognizer takes over: jsdom has none, so voice now reports it needs Chrome.
+    expect(await screen.findByText("Voice needs Chrome or Edge")).toBeInTheDocument();
+    Object.defineProperty(navigator, "mediaDevices", { value: undefined, configurable: true });
+  });
+
+  it("explains a blocked microphone on the server path too", async () => {
+    installServerMic();
+    Object.defineProperty(navigator, "mediaDevices", {
+      value: { getUserMedia: () => Promise.reject(new DOMException("no", "NotAllowedError")) },
+      configurable: true,
+    });
+    const session = fakeSession({ serverVoice: true });
+    render(<Composer session={session} />);
+    await userEvent.click(screen.getByRole("button", { name: /speak in/i }));
+    await waitFor(() => {
+      expect(session.note).toHaveBeenCalledWith(expect.stringMatching(/permission/i));
+    });
+    Object.defineProperty(navigator, "mediaDevices", { value: undefined, configurable: true });
   });
 });

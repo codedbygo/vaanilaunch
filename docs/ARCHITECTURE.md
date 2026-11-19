@@ -36,10 +36,19 @@ with Zod before use.
 
 ## Speech
 
-The browser's own speech recognition (Web Speech API, in Chrome and Edge) in the chosen language.
-It keeps listening until the owner taps the mic again. The words then stay in the text box to be
-checked and corrected, and are sent only on Send. Typing always works as well. A blocked
-microphone, a missing mic or an unsupported browser each get a plain message in the owner's
+Two engines, chosen automatically:
+
+- **Sarvam AI (when `SARVAM_API_KEY` is set).** The phone records with its own noise
+  suppression, echo cancellation and gain control. The clip goes through our server (the key
+  never reaches the browser) to Sarvam's speech-to-text, which is built for Indian languages,
+  mixed Telugu and English, and local names. Speech longer than 25 seconds is sent in pieces under
+  Sarvam's 30-second limit and the text is joined. A daily cap protects the credit.
+- **The browser's own recognizer** (Web Speech API in Chrome and Edge) when there is no key, or
+  for the rest of the visit after the speech service fails once (bad key, credit used up, rate
+  limit).
+
+Either way, the words appear in the text box to be checked and corrected, and are sent only on
+Send. Typing always works. A blocked or missing microphone gets a plain message in the owner's
 language.
 
 ## AI and business understanding

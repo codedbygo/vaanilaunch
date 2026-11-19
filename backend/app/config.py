@@ -45,6 +45,11 @@ FREE_LLM_FALLBACK_MODELS = [
 # Seconds per reply. A local model on CPU can take minutes to write a whole store.
 FREE_LLM_TIMEOUT = float(os.getenv("FREE_LLM_TIMEOUT", "600"))
 
+# Speech-to-text (Sarvam AI). Empty key = the browser's own speech recognition is used instead.
+SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
+SARVAM_STT_MODEL = os.getenv("SARVAM_STT_MODEL", "saaras:v4")
+MAX_TRANSCRIBE_PER_DAY = int(os.getenv("MAX_TRANSCRIBE_PER_DAY", "500"))
+
 GODADDY_API_KEY = os.getenv("GODADDY_API_KEY", "")
 GODADDY_API_SECRET = os.getenv("GODADDY_API_SECRET", "")
 GODADDY_API_BASE = os.getenv("GODADDY_API_BASE", "https://api.godaddy.com")

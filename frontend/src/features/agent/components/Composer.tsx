@@ -8,13 +8,16 @@ import { cn } from "@/lib/utils";
 
 import { langOf, speechError } from "../languages";
 import type { LaunchSession } from "../useLaunchSession";
+import { useRecorder } from "../useRecorder";
 import { useSpeech } from "../useSpeech";
 
 // Heights of the listening waveform bars (px).
 const WAVE = [10, 20, 30, 18, 26, 14, 28, 22, 12, 24, 16];
 
 export function Composer({ session }: { session: LaunchSession }) {
-  const { lang, photos, send, addPhotos, removePhoto, note, state } = session;
+  const { lang, photos, send, addPhotos, removePhoto, note, state, serverVoice } = session;
+  // After one failure of the speech service, this visit uses the browser recognizer.
+  const [voiceFailed, setVoiceFailed] = useState(false);
   const { t, locale } = useT();
   const [input, setInput] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -22,10 +25,27 @@ export function Composer({ session }: { session: LaunchSession }) {
   const native = langOf(lang).native;
 
   const submit = (text: string) => {
-    speech.cancel(); // a mic still on must not refill the box with this message
+    mic.cancel(); // a mic still on must not refill the box with this message
     setInput("");
     void send(text);
   };
+  const heard = (text: string) => {
+    setInput(text);
+    boxRef.current?.focus();
+  };
+  const recorder = useRecorder({
+    lang,
+    onText: setInput,
+    onEnd: heard,
+    onError: (code) => {
+      note(`🎤 ${speechError(code, locale)}`);
+    },
+    onFail: (text) => {
+      setVoiceFailed(true);
+      heard(text); // whatever was heard before the failure stays for checking
+      note(`🎤 ${t("error.voice")}`);
+    },
+  });
   const speech = useSpeech({
     lang,
     onText: setInput,
@@ -38,6 +58,11 @@ export function Composer({ session }: { session: LaunchSession }) {
       note(`🎤 ${speechError(code, locale)}`);
     },
   });
+  // Sarvam when the server has it and it hasn't failed this visit; otherwise the browser.
+  const mic =
+    serverVoice && !voiceFailed && recorder.supported
+      ? recorder
+      : { ...speech, transcribing: false };
   const canSend = !state.busy && (input.trim() !== "" || photos.length > 0);
 
   return (
@@ -76,21 +101,21 @@ export function Composer({ session }: { session: LaunchSession }) {
       <div className="grid justify-items-center gap-3 py-2 text-center">
         <button
           type="button"
-          onClick={speech.toggle}
-          disabled={!speech.supported || state.busy}
+          onClick={mic.toggle}
+          disabled={!mic.supported || state.busy || mic.transcribing}
           aria-label={
-            speech.listening
+            mic.listening
               ? t("composer.stopListening")
               : t("composer.speakIn", { language: native })
           }
           className={cn(
             "grid size-20 place-items-center rounded-full text-white shadow-brand transition-transform hover:scale-105 focus-visible:ring-4 focus-visible:ring-ring disabled:opacity-45",
-            speech.listening ? "animate-ring bg-rose" : "bg-saffron",
+            mic.listening ? "animate-ring bg-rose" : "bg-saffron",
           )}
         >
           <Mic className="size-8" aria-hidden="true" />
         </button>
-        {speech.listening && (
+        {mic.listening && (
           <div className="flex h-8 items-center gap-1" aria-hidden="true">
             {WAVE.map((h, i) => (
               <span
@@ -103,14 +128,16 @@ export function Composer({ session }: { session: LaunchSession }) {
         )}
         <div className="grid gap-0.5">
           <b className="text-base">
-            {speech.listening
+            {mic.listening
               ? t("composer.listening")
-              : speech.supported
-                ? t("composer.tapToSpeak", { language: native })
-                : t("composer.noVoice")}
+              : mic.transcribing
+                ? t("composer.transcribing")
+                : mic.supported
+                  ? t("composer.tapToSpeak", { language: native })
+                  : t("composer.noVoice")}
           </b>
           <span className="text-sm text-muted-foreground">
-            {speech.listening ? t("composer.listeningHint") : t("composer.idleHint")}
+            {mic.listening ? t("composer.listeningHint") : t("composer.idleHint")}
           </span>
         </div>
       </div>

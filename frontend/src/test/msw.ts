@@ -39,6 +39,7 @@ export const dashboard = {
 
 export const handlers = [
   http.get("*/api/sites", () => HttpResponse.json([])),
+  http.get("*/api/voice", () => HttpResponse.json({ server: false })),
   http.post("*/api/manage", () => HttpResponse.json(dashboard)),
   http.post("*/api/manage/orders/:ref", async ({ params, request }) => {
     const body = (await request.json()) as { status: string };

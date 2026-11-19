@@ -70,6 +70,7 @@ describe("studio in the owner's language", () => {
       note: vi.fn(),
       setCelebrate: vi.fn(),
       failed: false,
+      serverVoice: false,
       retry: vi.fn(() => Promise.resolve()),
     };
     renderWithProviders(<Studio session={session} ref={createRef()} />);
@@ -97,6 +98,7 @@ describe("studio in the owner's language", () => {
       note: vi.fn(),
       setCelebrate: vi.fn(),
       failed: true,
+      serverVoice: false,
       retry,
     };
     renderWithProviders(<Studio session={session} ref={createRef()} />);
@@ -156,6 +158,7 @@ describe("navigation", () => {
       note: vi.fn(),
       setCelebrate: vi.fn(),
       failed: false,
+      serverVoice: false,
       retry: vi.fn(() => Promise.resolve()),
     };
     renderWithProviders(<Studio session={session} ref={createRef()} />);

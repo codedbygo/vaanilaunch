@@ -2,7 +2,13 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { env } from "@/lib/env";
 
 import type { PowSolution } from "./pow";
-import { approveResultSchema, uploadResultSchema, type AgentEvent } from "./schemas";
+import {
+  approveResultSchema,
+  transcribeResultSchema,
+  uploadResultSchema,
+  voiceConfigSchema,
+  type AgentEvent,
+} from "./schemas";
 import { createSseParser } from "./sse";
 
 export interface AgentRequest {
@@ -87,3 +93,14 @@ export function approveDraft(sessionId: string, slug: string, key?: string) {
 
 export const qrUrl = (data: string) =>
   `${env.VITE_API_URL}/api/qr?data=${encodeURIComponent(data)}`;
+
+/** Whether the server transcribes voice (Sarvam key set); otherwise the browser recognizer is used. */
+export const getVoiceConfig = (signal: AbortSignal) =>
+  apiFetch("/api/voice", voiceConfigSchema, { signal });
+
+/** One recorded clip (at most 30 s) as a data URL, transcribed in the owner's language. */
+export const transcribeClip = (audio: string, lang: string) =>
+  apiFetch("/api/transcribe", transcribeResultSchema, {
+    method: "POST",
+    body: JSON.stringify({ audio, lang }),
+  });

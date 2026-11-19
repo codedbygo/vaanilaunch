@@ -9,6 +9,13 @@ const MAX_MS = 3 * 60 * 1000; // safety stop for a mic left on
 // session and restart, which the onend handler already does for silences.
 const continuousWorks = () => !/Android/i.test(navigator.userAgent);
 
+/**
+ * When the recognizer doesn't know a word (often an Indian place name) it spells it: "G a c h i".
+ * Join such runs of single letters back into one word so the owner can fix it in one place.
+ */
+export const joinSpelled = (text: string) =>
+  text.replace(/\b(?:\p{L} ){2,}\p{L}\b/gu, (run) => run.replaceAll(" ", ""));
+
 interface RecognitionResult {
   isFinal: boolean;
   0: { transcript: string };
@@ -68,7 +75,7 @@ export function useSpeech({ lang, onText, onEnd, onError }: Options) {
       if (discard.current || rec.current !== r) return;
       let interim = "";
       for (const res of Array.from(e.results).slice(e.resultIndex)) {
-        if (res.isFinal) said.current = `${said.current} ${res[0].transcript}`.trim();
+        if (res.isFinal) said.current = `${said.current} ${joinSpelled(res[0].transcript)}`.trim();
         else interim += res[0].transcript;
       }
       cb.current.onText(`${said.current} ${interim}`.trim());

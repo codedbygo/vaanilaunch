@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { useSpeech } from "./useSpeech";
+import { joinSpelled, useSpeech } from "./useSpeech";
 
 interface Fake {
   onresult: ((e: unknown) => void) | null;
@@ -162,5 +162,14 @@ describe("useSpeech: sending clears the mic", () => {
     });
     expect(mic.made[0]?.continuous).toBe(false);
     ua.mockRestore();
+  });
+});
+
+describe("joinSpelled", () => {
+  it("joins letters the recognizer spelled out, and leaves normal words alone", () => {
+    expect(joinSpelled("women's PG in G a c h i bowli")).toBe("women's PG in Gachi bowli");
+    expect(joinSpelled("a PG in Ameerpet")).toBe("a PG in Ameerpet");
+    expect(joinSpelled("A B")).toBe("A B"); // two letters can be real words
+    expect(joinSpelled("హై ద రా బా ద్")).toBe("హై ద రా బా ద్"); // syllables are not spelled letters
   });
 });

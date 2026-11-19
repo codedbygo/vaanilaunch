@@ -956,3 +956,78 @@ def test_dashboard_returns_the_checklist():
     d = api.post("/api/manage", json={"slug": "check-shop", "key": site["edit_key"]}).json()
     assert {i["key"] for i in d["checklist"]} >= {"name", "published"}
     assert next(i for i in d["checklist"] if i["key"] == "name")["done"] is True
+
+
+# ---------- Voice: speech-to-text through Sarvam ----------
+def _wav_data_url(n=100):
+    import base64 as _b
+    return "data:audio/webm;codecs=opus;base64," + _b.b64encode(b"\x1aE\xdf\xa3" + b"0" * n).decode()
+
+
+def test_voice_config_reports_whether_server_speech_is_on(monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "SARVAM_API_KEY", "")
+    assert api.get("/api/voice").json() == {"server": False}
+    monkeypatch.setattr(config, "SARVAM_API_KEY", "k")
+    assert api.get("/api/voice").json() == {"server": True}
+
+
+def test_transcribe_sends_the_clip_to_sarvam_with_language_and_key(monkeypatch):
+    import httpx as _h
+    from app import config, speech
+    monkeypatch.setattr(config, "SARVAM_API_KEY", "sk-test")
+    monkeypatch.setattr(speech, "_day", {"date": "", "count": 0})
+    seen = {}
+
+    def handler(req):
+        seen.update(url=str(req.url), key=req.headers["api-subscription-key"], body=req.content)
+        return _h.Response(200, json={"request_id": "r1", "transcript": " అమీర్‌పేట్‌లో మహిళల పీజీ ", "language_code": "te-IN"})
+    monkeypatch.setattr(speech, "_transport", _h.MockTransport(handler))
+    r = api.post("/api/transcribe", json={"audio": _wav_data_url(), "lang": "te-IN"})
+    assert r.status_code == 200 and r.json() == {"text": "అమీర్‌పేట్‌లో మహిళల పీజీ"}
+    assert seen["url"] == speech.URL and seen["key"] == "sk-test"
+    assert b'name="language_code"' in seen["body"] and b"te-IN" in seen["body"] and b"saaras:v4" in seen["body"]
+    assert b'filename="voice.webm"' in seen["body"]
+
+
+def test_transcribe_rejects_bad_input():
+    assert api.post("/api/transcribe", json={"audio": "data:image/png;base64,AAAA", "lang": "te-IN"}).status_code == 400
+    assert api.post("/api/transcribe", json={"audio": _wav_data_url(), "lang": "fr-FR"}).status_code == 400
+    assert api.post("/api/transcribe", json={"audio": "data:audio/webm;base64,@@@@", "lang": "te-IN"}).status_code == 400
+    assert api.post("/api/transcribe", json={"audio": "data:audio/webm;base64,AAA", "lang": "te-IN"}).status_code == 400
+    assert api.post("/api/transcribe", json={"audio": "data:audio/webm;base64,", "lang": "te-IN"}).status_code == 400
+    import base64 as _b
+    big = "data:audio/wav;base64," + _b.b64encode(b"0" * 1_500_001).decode()
+    assert api.post("/api/transcribe", json={"audio": big, "lang": "te-IN"}).status_code == 400
+
+
+def test_transcribe_falls_back_when_the_service_cannot_be_used(monkeypatch):
+    import httpx as _h
+    from app import config, speech
+    monkeypatch.setattr(config, "SARVAM_API_KEY", "")
+    assert api.post("/api/transcribe", json={"audio": _wav_data_url(), "lang": "te-IN"}).status_code == 503
+
+    monkeypatch.setattr(config, "SARVAM_API_KEY", "sk-test")
+    monkeypatch.setattr(speech, "_day", {"date": "", "count": 0})
+    for status in (402, 403, 429, 503):
+        monkeypatch.setattr(speech, "_transport", _h.MockTransport(lambda req, s=status: _h.Response(s, json={"error": {}})))
+        assert api.post("/api/transcribe", json={"audio": _wav_data_url(), "lang": "hi-IN"}).status_code == 503
+
+    monkeypatch.setattr(speech, "_transport", _h.MockTransport(lambda req: _h.Response(200, content=b"not json")))
+    assert api.post("/api/transcribe", json={"audio": _wav_data_url(), "lang": "hi-IN"}).status_code == 503
+
+    def boom(req):
+        raise _h.ConnectError("down")
+    monkeypatch.setattr(speech, "_transport", _h.MockTransport(boom))
+    assert api.post("/api/transcribe", json={"audio": _wav_data_url(), "lang": "hi-IN"}).status_code == 503
+
+
+def test_daily_cap_protects_the_free_credit(monkeypatch):
+    import httpx as _h
+    from app import config, speech
+    monkeypatch.setattr(config, "SARVAM_API_KEY", "sk-test")
+    monkeypatch.setattr(config, "MAX_TRANSCRIBE_PER_DAY", 1)
+    monkeypatch.setattr(speech, "_day", {"date": "", "count": 0})
+    monkeypatch.setattr(speech, "_transport", _h.MockTransport(lambda req: _h.Response(200, json={"transcript": "ok"})))
+    assert api.post("/api/transcribe", json={"audio": _wav_data_url(), "lang": "en-IN"}).status_code == 200
+    assert api.post("/api/transcribe", json={"audio": _wav_data_url(), "lang": "en-IN"}).status_code == 503

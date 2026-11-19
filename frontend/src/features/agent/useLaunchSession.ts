@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useReducer, useRef, useState } from "react";
 
 import { useManageStore } from "@/app/stores/manage-store";
@@ -8,7 +8,7 @@ import { ApiError } from "@/lib/api";
 import { errorKey } from "@/lib/error-message";
 import { DEFAULT_LOCALE, translate, useLocaleStore, type MessageKey } from "@/lib/i18n";
 
-import { approveDraft, streamAgent, uploadPhoto } from "./api";
+import { approveDraft, getVoiceConfig, streamAgent, uploadPhoto } from "./api";
 import { langOf } from "./languages";
 import { getPowSolution } from "./pow";
 import { manageCredsSchema, type AgentEvent } from "./schemas";
@@ -42,6 +42,13 @@ export function useLaunchSession() {
   const creds = useManageStore((s) => s.creds);
   const setCreds = useManageStore((s) => s.setCreds);
   const qc = useQueryClient();
+  // Server speech-to-text (Sarvam) when the server has a key; asked once per visit.
+  const voice = useQuery({
+    queryKey: ["voice-config"],
+    queryFn: ({ signal }) => getVoiceConfig(signal),
+    staleTime: Infinity,
+    retry: false,
+  });
   const [sessionId] = useState(newSessionId);
   const [state, dispatch] = useReducer(sessionReducer, creds, (c) =>
     welcome(c ? "studio.welcomeBack" : "studio.welcome"),
@@ -166,6 +173,7 @@ export function useLaunchSession() {
   return {
     state,
     lang,
+    serverVoice: voice.data?.server ?? false,
     failed: failed !== null,
     retry: async () => {
       if (failed && !state.busy) await deliver(failed);

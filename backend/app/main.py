@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
-from . import config, db, mail_text, notify, observability, security, verify
+from . import config, db, mail_text, notify, observability, security, speech, verify
 from .agent import BudgetExceeded, Session, run_agent
 from .site_render import as_dict, as_list, render_site, store_csp
 
@@ -127,6 +127,7 @@ _APP_CSP = (f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-in
 # Body limits checked before anything reads the body (a huge body would otherwise be buffered whole).
 _UPLOAD_LIMIT = 4_500_000
 _BODY_LIMIT = 256_000
+_VOICE_LIMIT = 2_200_000  # one voice clip of up to 30 s, base64 in JSON
 
 
 @app.middleware("http")
@@ -145,7 +146,7 @@ async def request_ids(request: Request, call_next):
 async def guard(request: Request, call_next):
     if request.method == "POST" and request.url.path.startswith("/api/"):
         size = request.headers.get("content-length")
-        limit = _UPLOAD_LIMIT if request.url.path == "/api/upload" else _BODY_LIMIT
+        limit = {"/api/upload": _UPLOAD_LIMIT, "/api/transcribe": _VOICE_LIMIT}.get(request.url.path, _BODY_LIMIT)
         if size is None or not size.isdigit():
             return PlainTextResponse("Content-Length required", status_code=411)
         if int(size) > limit:
@@ -258,6 +259,40 @@ async def upload(body: UploadIn, request: Request):
     with open(os.path.join(db.UPLOAD_DIR, f"{iid}.jpg"), "wb") as f:
         f.write(raw)
     return {"id": iid, "url": f"/media/{iid}.jpg"}
+
+
+# ---------- Voice: speech-to-text on the server (Sarvam AI) ----------
+@app.get("/api/voice")
+async def voice_config():
+    """Tells the browser whether to record for the server or use its own recognizer."""
+    return {"server": speech.available()}
+
+
+class TranscribeIn(BaseModel):
+    audio: str = Field(max_length=2_100_000)  # data URL; 1.5 MB of audio once decoded
+    lang: str
+
+
+@app.post("/api/transcribe")
+async def transcribe(body: TranscribeIn, request: Request):
+    _rate_limit(f"stt:{_ip(request)}", 120, 3600)
+    m = re.fullmatch(r"data:(audio/[a-z0-9]+)(?:;[^,]*)?;base64,([A-Za-z0-9+/=]+)", body.audio)
+    if not m or m.group(1) not in speech.MIME:
+        raise HTTPException(400, "Send a WebM, OGG, MP4 or WAV audio data URL")
+    if body.lang not in speech.LANGS:
+        raise HTTPException(400, "Unsupported language")
+    try:
+        raw = base64.b64decode(m.group(2), validate=True)
+    except ValueError:
+        raise HTTPException(400, "Invalid audio data")
+    if not raw or len(raw) > speech.MAX_BYTES:
+        raise HTTPException(400, "Audio is empty or longer than 30 seconds")
+    try:
+        text = await speech.transcribe(raw, m.group(1), body.lang)
+    except speech.SpeechError as e:
+        log.warning("speech-to-text unavailable: %s", e)
+        raise HTTPException(503, "Speech service unavailable")
+    return {"text": text}
 
 
 # ---------- Agent (Server-Sent Events) ----------
